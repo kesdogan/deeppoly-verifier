@@ -236,6 +236,28 @@ def get_network(
             in_dim=in_dim,
             num_class=10,
         )
+    ### Hidden networks
+    elif name == "fc_8":  # Leaky ReLU - Deep
+        model = fc_model(
+            activations=[
+                (0.1, 100),
+                (0.2, 100),
+                (0.5, 100),
+                (0.75, 100),
+                (1.0, 100),
+                (1.35, 100),
+                (5.0, 100),
+            ]
+        )
+    elif name == "conv_5":  # Conv_5
+        model = conv_model(
+            convolutions=[(16, 4, 2, 1, 0.2), (64, 4, 2, 1, 2.0)],
+            activations=[(0.1, 100), (0.8, 100), (2.0, 10)],
+            in_ch=in_ch,
+            in_dim=in_dim,
+            num_class=10,
+        )
+    ### Hidden networks            
     else:
         assert False, f"Invalid network name: {name}"
 

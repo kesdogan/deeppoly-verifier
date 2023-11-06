@@ -9,7 +9,7 @@ def parse_spec(path: str) -> Tuple[int, str, torch.Tensor, float]:
         path (str): Path to spec file
 
     Returns:
-        Tuple[int, str, torch.Tensor, float]: Label, dataset, image and epsilon
+        Tuple[int, str, torch.Tensor, float]: Label, image and epsilon
     """
 
     # Get epsilon from filename

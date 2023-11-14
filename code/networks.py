@@ -257,7 +257,7 @@ def get_network(
             in_dim=in_dim,
             num_class=10,
         )
-    ### Hidden networks            
+    ### Hidden networks
     else:
         assert False, f"Invalid network name: {name}"
 

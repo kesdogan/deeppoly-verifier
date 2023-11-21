@@ -136,7 +136,7 @@ def get_network(
 
     model: Optional[nn.Sequential] = None
 
-    assert dataset in ["mnist", "cifar10"], f"Invalid dataset: {dataset}"
+    assert dataset in ["mnist", "cifar10", "2dim"], f"Invalid dataset: {dataset}"
 
     in_ch, in_dim = (1, 28) if dataset == "mnist" else (3, 32)
 
@@ -257,13 +257,35 @@ def get_network(
             in_dim=in_dim,
             num_class=10,
         )
+    elif name == "fc_lecture":
+        model = nn.Sequential(
+            nn.Linear(2, 2),
+            nn.Linear(2, 2),
+            nn.Linear(2, 2),
+        )
+        model[0].weight.data = torch.tensor(
+            [
+                [1., 1.],
+                [1., -1.],
+            ]
+        )
+        model[0].bias.data = torch.tensor([0., 0.])
+        model[1].weight.data = model[0].weight.data
+        model[1].bias.data = torch.tensor([-0.5, 0.])
+        model[2].weight.data = torch.tensor(
+            [
+                [-1., 1.],
+                [0., 1.],
+            ]
+        )
+        model[2].bias.data = torch.tensor([3., 0.])
     ### Hidden networks
     else:
         assert False, f"Invalid network name: {name}"
 
     assert model is not None, f"Model is None for {name}"
 
-    if len(weight_path) > 0:
+    if len(weight_path) > 0 and name != "fc_lecture":
         model.load_state_dict(torch.load(weight_path, map_location="cpu"))
 
     model.to(device)

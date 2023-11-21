@@ -65,6 +65,7 @@ def main():
             "conv_2",
             "conv_3",
             "conv_4",
+            "fc_lecture",
         ],
         required=True,
         help="Neural network architecture which is supposed to be verified.",

@@ -17,7 +17,7 @@ def parse_spec(path: str) -> Tuple[int, str, torch.Tensor, float]:
     # Get dataset from filename
     dataset = path.split("/")[-1].split("_")[1]
 
-    shape = (1, 28, 28) if "mnist" in dataset else (3, 32, 32)
+    shape = (1, 28, 28) if "mnist" in dataset else (2,) if "2dim" in dataset else (3, 32, 32)
 
     with open(path, "r") as f:
         # First line is the label

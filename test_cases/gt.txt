@@ -3,6 +3,7 @@ conv_base,img1_mnist_0.0014.txt,verified
 conv_base,img2_mnist_0.0494.txt,verified
 conv_base,img3_mnist_0.1240.txt,verified
 conv_base,img4_mnist_0.0458.txt,verified
+fc_lecture,in0_2dim_1.0.txt,verified
 fc_base,img0_mnist_0.2456.txt,not verified
 fc_base,img1_mnist_0.0044.txt,verified
 fc_base,img2_mnist_0.0784.txt,verified

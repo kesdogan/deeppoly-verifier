@@ -1,0 +1,6 @@
+#!/bin/bash
+
+for spec in `ls test_cases/$1`
+do
+  python src/verifier.py --net $1 --spec "test_cases/$1/${spec}" --check
+done

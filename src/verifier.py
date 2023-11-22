@@ -25,8 +25,10 @@ def analyze(
     for layer in net.children():
         if isinstance(layer, torch.nn.Flatten):
             layers.append(FlattenTransformer())
-        if isinstance(layer, torch.nn.Linear):
+        elif isinstance(layer, torch.nn.Linear):
             layers.append(LinearTransformer(layer.weight, layer.bias))
+        else:
+            raise Exception("Unknown layer type")
     polygon_model = nn.Sequential(*layers)
 
     in_polygon = Polygon.create_from_input(inputs.shape)

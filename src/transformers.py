@@ -16,6 +16,8 @@ class Polygon:
     - `*source` is the shape of the input, e.g. (1, 28, 28) for MNIST.
     We hereby refer to the shape of weights as the shape of the Polygon itself.
     """
+    input_tensor: torch.Tensor
+    eps: float
 
     l_coefs: Tensor  # (batch, out, source)
     l_bias: Tensor  # (batch, out)
@@ -24,13 +26,13 @@ class Polygon:
     u_bias: Tensor  # (batch, out)
 
     @staticmethod
-    def create_from_input(input_shape: torch.Size) -> "Polygon":
+    def create_from_input(input_tensor: torch.Tensor, eps: float) -> "Polygon":
         """
         - input shape: (batch, source)
         - output: Polygon with shape (batch, source, source),
         i.e. behaves like an identity layer where out == source.
         """
-        batch, *dims = input_shape
+        batch, *dims = input_tensor.shape
         input_size = torch.prod(torch.tensor(dims)).item()
 
         polygon = Polygon(
@@ -51,8 +53,8 @@ class Polygon:
         #     shape = x.shape[:-k]
         #     return torch.einsum("...i,...i->...", x.view(*shape, -1), y.view(*shape, -1))
 
-    def _get_bound(self, x: Tensor, eps: float, lower: bool) -> Tensor:
-        x = x.reshape(x.shape[0], -1)
+    def _get_bound(self, lower: bool) -> Tensor:
+        x = self.input_tensor.reshape(self.input_tensor.shape[0], -1)
 
         if lower:
             weight, bias = self.l_coefs, self.l_bias
@@ -64,7 +66,7 @@ class Polygon:
             condition = weight < 0
 
         # (batch, 1, source)
-        x_lb, x_ub = (x - eps).unsqueeze(1), (x + eps).unsqueeze(1)
+        x_lb, x_ub = (x - self.eps).unsqueeze(1), (x + self.eps).unsqueeze(1)
         # input_dim = len(x.shape) - 1
 
         # (batch, out, source)
@@ -74,13 +76,13 @@ class Polygon:
         # return torch.einsum("...i,...i->...", weight, combination) + bias
         return (weight * combination).sum(-1) + bias
 
-    def evaluate(self, x: Tensor, eps: float) -> tuple[Tensor, Tensor]:
+    def evaluate(self) -> tuple[Tensor, Tensor]:
         """
         - x.shape: (batch, *source)
         - output: a tuple of lower and upper bounds, each of shape (batch, *out)
         """
-        l_bound = self._get_bound(x, eps, lower=True)
-        u_bound = self._get_bound(x, eps, lower=False)
+        l_bound = self._get_bound(lower=True)
+        u_bound = self._get_bound(lower=False)
 
         return l_bound, u_bound
 

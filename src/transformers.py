@@ -1,4 +1,3 @@
-# %%
 import logging
 from dataclasses import dataclass
 
@@ -159,4 +158,57 @@ class LinearTransformer(torch.nn.Module):
             eps=x.eps,
         )
         logging.debug(f"Linear layer output:\n{polygon}")
+        return polygon
+
+
+class ReLUTransformer(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x: Polygon) -> Polygon:
+        """
+        - x shape: (batch, in, input_size)
+        - output shape: (batch, out,  input_size)
+        """
+        l_bound, u_bound = x.evaluate()
+
+        l_coefs = x.l_coefs.clone()
+        l_bias = x.l_bias.clone()
+        u_coefs = x.u_coefs.clone()
+        u_bias = x.u_bias.clone()
+
+        strictly_negative: torch.Tensor = u_bound <= 0
+        # In this case the output of this neuron is always 0 regardless of the network input,
+        # so we clip both the lower and upper constraint inequalities to 0
+        l_coefs[strictly_negative] = 0
+        l_bias[strictly_negative] = 0
+        u_coefs[strictly_negative] = 0
+        u_bias[strictly_negative] = 0
+
+        strictly_positive: torch.Tensor = l_bound >= 0
+        # In this case the output of this neuron is always equal to the previous neuron's output,
+        # so we keep the lower and upper constraint inequalities unchanged
+
+        crossing_relu = ~(strictly_negative | strictly_positive)
+        # DeepPoly ReLU Relaxation I
+        # For lower bound we clip the inequality to 0
+        l_coefs[crossing_relu] = 0
+        l_bias[crossing_relu] = 0
+        # For upper bound, we calculate the slope 𝜆 and then apply  y ≤ 𝜆 * (x − l_x)
+        slope_lambda = u_bound[crossing_relu] / (
+            u_bound[crossing_relu] - l_bound[crossing_relu]
+        )
+        u_coefs[crossing_relu] = slope_lambda * x.u_coefs[crossing_relu]
+        u_bias[crossing_relu] = slope_lambda * (
+            x.u_bias[crossing_relu] - l_bound[crossing_relu]
+        )
+
+        polygon = Polygon(
+            l_coefs=l_coefs,
+            l_bias=l_bias,
+            u_coefs=u_coefs,
+            u_bias=u_bias,
+            input_tensor=x.input_tensor,
+            eps=x.eps,
+        )
         return polygon

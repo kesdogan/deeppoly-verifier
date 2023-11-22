@@ -69,7 +69,7 @@ class Polygon:
         )
         # print(torch.eye(input_size).shape)
         # print(torch.eye(input_size).repeat(batch, 1, 1).shape)
-        logging.debug(f"Created Polygon\n{polygon}")
+        logging.debug(f"Created\n{polygon}")
 
         return polygon
 
@@ -146,13 +146,20 @@ class LinearTransformer(torch.nn.Module):
             torch.clamp(self.weight, min=0) @ x.u_coefs
             + torch.clamp(self.weight, max=0) @ x.l_coefs
         )
+        # print((torch.clamp(self.weight, min=0) * x.l_bias.unsqueeze(1)).shape)
+        # print(
+        #     (
+        #         (torch.clamp(self.weight, min=0) * x.l_bias.unsqueeze(1)).sum(-1)
+        #         + (torch.clamp(self.weight, max=0) * x.u_bias.unsqueeze(1)).sum(-1)
+        #     ).shape
+        # )
         l_bias = (
-            (torch.clamp(self.weight, min=0) * x.l_bias).sum(-1)
-            + (torch.clamp(self.weight, max=0) * x.u_bias).sum(-1)
+            (torch.clamp(self.weight, min=0) * x.l_bias.unsqueeze(1)).sum(-1)
+            + (torch.clamp(self.weight, max=0) * x.u_bias.unsqueeze(1)).sum(-1)
         ) + self.bias
         u_bias = (
-            (torch.clamp(self.weight, min=0) * x.u_bias).sum(-1)
-            + (torch.clamp(self.weight, max=0) * x.l_bias).sum(-1)
+            (torch.clamp(self.weight, min=0) * x.u_bias.unsqueeze(1)).sum(-1)
+            + (torch.clamp(self.weight, max=0) * x.l_bias.unsqueeze(1)).sum(-1)
         ) + self.bias
 
         polygon = Polygon(

@@ -1,10 +1,9 @@
 # %%
+import logging
 from dataclasses import dataclass
 
 import torch
 from torch import Tensor
-
-import logging
 
 
 @dataclass
@@ -16,6 +15,7 @@ class Polygon:
     - `*source` is the shape of the input, e.g. (1, 28, 28) for MNIST.
     We hereby refer to the shape of weights as the shape of the Polygon itself.
     """
+
     input_tensor: torch.Tensor
     eps: float
 
@@ -24,6 +24,26 @@ class Polygon:
 
     u_coefs: Tensor  # (batch, out, source)
     u_bias: Tensor  # (batch, out)
+
+    # TODO Shape of l_coefs doesn't have a batch
+    def __str__(self) -> str:
+        result = "Polygon(\n"
+        batch, outputs = self.l_bias.shape
+        lb, ub = self.evaluate()
+        for b in range(batch):
+            for j in range(outputs):
+                result += f"  o{j} ∈ [{lb[b, j]:.0f}, {ub[b, j]:.0f}]\n"
+                l_coefs = " + ".join(
+                    f"({c} × z{i})" for i, c in enumerate(self.l_coefs[j])
+                )
+                result += f"  o{j} ≥ {self.l_bias[b, j]:.0f} + {l_coefs}\n"
+                u_coefs = " + ".join(
+                    f"({c} × z{i})" for i, c in enumerate(self.u_coefs[j])
+                )
+                result += f"  o{j} ≤ {self.u_bias[b, j]:.0f} + {u_coefs}\n"
+                result += "\n"
+        result = result.strip() + "\n)"
+        return result
 
     @staticmethod
     def create_from_input(input_tensor: torch.Tensor, eps: float) -> "Polygon":
@@ -40,8 +60,10 @@ class Polygon:
             l_bias=torch.zeros((batch, input_size)),
             u_coefs=torch.eye(input_size).repeat(batch, 1),
             u_bias=torch.zeros((batch, input_size)),
+            input_tensor=input_tensor,
+            eps=eps,
         )
-        logging.debug(f"Created Polygon {polygon}")
+        logging.debug(f"Created Polygon\n{polygon}")
 
         return polygon
 
@@ -126,6 +148,13 @@ class LinearTransformer(torch.nn.Module):
             + (torch.clamp(self.weight, max=0) * x.l_bias).sum(-1)
         ) + self.bias
 
-        polygon = Polygon(l_coefs=l_coefs, l_bias=l_bias, u_coefs=u_coefs, u_bias=u_bias, )
+        polygon = Polygon(
+            l_coefs=l_coefs,
+            l_bias=l_bias,
+            u_coefs=u_coefs,
+            u_bias=u_bias,
+            input_tensor=x.input_tensor,
+            eps=x.eps,
+        )
         logging.debug(f"Linear layer outputs Polygon {polygon}")
         return polygon

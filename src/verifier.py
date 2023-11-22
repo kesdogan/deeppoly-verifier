@@ -3,9 +3,8 @@ import logging
 
 import torch
 import torch.nn as nn
-
-from transformers import LinearTransformer, FlattenTransformer, Polygon
 from networks import get_network
+from transformers import FlattenTransformer, LinearTransformer, Polygon
 from utils.loading import parse_spec
 
 DEVICE = "cpu"
@@ -31,9 +30,9 @@ def analyze(
             raise Exception("Unknown layer type")
     polygon_model = nn.Sequential(*layers)
 
-    in_polygon = Polygon.create_from_input(inputs.shape)
+    in_polygon = Polygon.create_from_input(inputs, eps=eps)
     out_polygon = polygon_model(in_polygon)
-    lower_bounds, upper_bounds = out_polygon.evaluate(inputs, eps)
+    lower_bounds, upper_bounds = out_polygon.evaluate()
 
     # noinspection PyTypeChecker
     verified = torch.all(

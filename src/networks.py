@@ -260,7 +260,9 @@ def get_network(
     elif name == "fc_lecture":
         model = nn.Sequential(
             nn.Linear(2, 2),
+            nn.ReLU(),
             nn.Linear(2, 2),
+            nn.ReLU(),
             nn.Linear(2, 2),
         )
         model[0].weight.data = torch.tensor(
@@ -270,15 +272,15 @@ def get_network(
             ]
         )
         model[0].bias.data = torch.tensor([0., 0.])
-        model[1].weight.data = model[0].weight.data
-        model[1].bias.data = torch.tensor([-0.5, 0.])
-        model[2].weight.data = torch.tensor(
+        model[2].weight.data = model[0].weight.data
+        model[2].bias.data = torch.tensor([-0.5, 0.])
+        model[4].weight.data = torch.tensor(
             [
                 [-1., 1.],
                 [0., 1.],
             ]
         )
-        model[2].bias.data = torch.tensor([3., 0.])
+        model[4].bias.data = torch.tensor([3., 0.])
     ### Hidden networks
     else:
         assert False, f"Invalid network name: {name}"

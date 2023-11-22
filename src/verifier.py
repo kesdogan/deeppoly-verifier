@@ -4,13 +4,13 @@ import logging
 import torch
 import torch.nn as nn
 from networks import get_network
-from transformers import FlattenTransformer, LinearTransformer, Polygon
+from transformers import FlattenTransformer, LinearTransformer, Polygon, ReLUTransformer
 from utils.loading import parse_spec
 
 DEVICE = "cpu"
 
 torch.set_printoptions(threshold=10_000)
-logging.basicConfig(level=logging.DEBUG)
+#logging.basicConfig(level=logging.DEBUG)
 
 
 def analyze(
@@ -19,29 +19,37 @@ def analyze(
     # add the 'batch' dimension
     inputs = inputs.unsqueeze(0)
 
+    n_classes = list(net.children())[-1].out_features
+    final_layer = torch.nn.Linear(in_features=n_classes, out_features=n_classes - 1)
+
+    final_layer_weights = -torch.eye(n_classes)
+    final_layer_weights = torch.cat(
+        (final_layer_weights[:true_label], final_layer_weights[true_label + 1 :])
+    )
+    final_layer_weights[:, true_label] = 1.0
+    final_layer.weight.data = final_layer_weights
+
+    net_layers = list(net.children()) + [final_layer]
+
     # Construct a model like net that passes Polygon through each layer
-    layers = []
-    for layer in net.children():
+    transformer_layers = []
+    for layer in net_layers:
         if isinstance(layer, torch.nn.Flatten):
-            layers.append(FlattenTransformer())
+            transformer_layers.append(FlattenTransformer())
         elif isinstance(layer, torch.nn.Linear):
-            layers.append(LinearTransformer(layer.weight, layer.bias))
+            transformer_layers.append(LinearTransformer(layer.weight, layer.bias))
+        elif isinstance(layer, torch.nn.ReLU):
+            transformer_layers.append(ReLUTransformer())
         else:
             raise Exception("Unknown layer type")
-    polygon_model = nn.Sequential(*layers)
+    polygon_model = nn.Sequential(*transformer_layers)
 
     in_polygon = Polygon.create_from_input(inputs, eps=eps)
     out_polygon = polygon_model(in_polygon)
     lower_bounds, upper_bounds = out_polygon.evaluate()
 
     # noinspection PyTypeChecker
-    verified = torch.all(
-        torch.cat(
-            (upper_bounds[:, :true_label], upper_bounds[:, (true_label + 1) :]), dim=1
-        )
-        < lower_bounds[:, true_label]
-    ).item()
-
+    verified = torch.all(lower_bounds > 0).item()
     return verified
 
 

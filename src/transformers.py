@@ -24,24 +24,23 @@ class Polygon:
     u_coefs: Tensor  # (batch, out, source)
     u_bias: Tensor  # (batch, out)
 
-    # TODO Shape of l_coefs doesn't have a batch
     def __str__(self) -> str:
         lb, ub = self.evaluate()
 
-        result = f"Polygon(\n"
+        result = "Polygon(\n"
         batch, out, source = tuple(self.l_coefs.shape)
         result += f"  shape: ({batch=}, {out=}, {source=})\n\n"
         for b in range(batch):
             for j in range(out):
-                result += f"  o{j} ∈ [{lb[b, j]:.0f}, {ub[b, j]:.0f}]\n"
+                result += f"  o{j} ∈ [{lb[b, j]}, {ub[b, j]}]\n"
                 l_coefs = " + ".join(
                     f"({c} × z{i})" for i, c in enumerate(self.l_coefs[b, j])
                 )
-                result += f"  o{j} ≥ {self.l_bias[b, j]:.0f} + {l_coefs}\n"
+                result += f"  o{j} ≥ {self.l_bias[b, j]} + {l_coefs}\n"
                 u_coefs = " + ".join(
                     f"({c} × z{i})" for i, c in enumerate(self.u_coefs[b, j])
                 )
-                result += f"  o{j} ≤ {self.u_bias[b, j]:.0f} + {u_coefs}\n"
+                result += f"  o{j} ≤ {self.u_bias[b, j]} + {u_coefs}\n"
                 result += "\n"
         result = result.strip() + "\n)"
         return result
@@ -124,7 +123,6 @@ class LinearTransformer(torch.nn.Module):
         - x shape: (batch, in, input_size)
         - output shape: (batch, out,  input_size)
         """
-        logging.debug(f"Linear layer input:\n{x}")
         l_coefs = (
             torch.clamp(self.weight, min=0) @ x.l_coefs
             + torch.clamp(self.weight, max=0) @ x.u_coefs
@@ -177,31 +175,27 @@ class ReLUTransformer(torch.nn.Module):
         u_coefs = x.u_coefs.clone()
         u_bias = x.u_bias.clone()
 
-        strictly_negative: torch.Tensor = u_bound <= 0
+        is_always_negative: torch.Tensor = u_bound <= 0
         # In this case the output of this neuron is always 0 regardless of the network input,
         # so we clip both the lower and upper constraint inequalities to 0
-        l_coefs[strictly_negative] = 0
-        l_bias[strictly_negative] = 0
-        u_coefs[strictly_negative] = 0
-        u_bias[strictly_negative] = 0
+        l_coefs[is_always_negative] = 0
+        l_bias[is_always_negative] = 0
+        u_coefs[is_always_negative] = 0
+        u_bias[is_always_negative] = 0
 
-        strictly_positive: torch.Tensor = l_bound >= 0
+        is_aways_positive: torch.Tensor = l_bound >= 0
         # In this case the output of this neuron is always equal to the previous neuron's output,
         # so we keep the lower and upper constraint inequalities unchanged
 
-        crossing_relu = ~(strictly_negative | strictly_positive)
+        is_crossing = ~(is_always_negative | is_aways_positive)
         # DeepPoly ReLU Relaxation I
         # For lower bound we clip the inequality to 0
-        l_coefs[crossing_relu] = 0
-        l_bias[crossing_relu] = 0
+        l_coefs[is_crossing] = 0
+        l_bias[is_crossing] = 0
         # For upper bound, we calculate the slope 𝜆 and then apply  y ≤ 𝜆 * (x − l_x)
-        slope_lambda = u_bound[crossing_relu] / (
-            u_bound[crossing_relu] - l_bound[crossing_relu]
-        )
-        u_coefs[crossing_relu] = slope_lambda * x.u_coefs[crossing_relu]
-        u_bias[crossing_relu] = slope_lambda * (
-            x.u_bias[crossing_relu] - l_bound[crossing_relu]
-        )
+        slope = u_bound[is_crossing] / (u_bound[is_crossing] - l_bound[is_crossing])
+        u_coefs[is_crossing] = slope.unsqueeze(-1) * x.u_coefs[is_crossing]
+        u_bias[is_crossing] = slope * (x.u_bias[is_crossing] - l_bound[is_crossing])
 
         polygon = Polygon(
             l_coefs=l_coefs,
@@ -211,4 +205,5 @@ class ReLUTransformer(torch.nn.Module):
             input_tensor=x.input_tensor,
             eps=x.eps,
         )
+        logging.debug(f"ReLU output:\n{polygon}")
         return polygon

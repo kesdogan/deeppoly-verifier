@@ -27,18 +27,22 @@ class Polygon:
 
     # TODO Shape of l_coefs doesn't have a batch
     def __str__(self) -> str:
-        result = "Polygon(\n"
-        batch, outputs = self.l_bias.shape
+        print(self.l_coefs.shape)
+        print(self.l_bias.shape)
         lb, ub = self.evaluate()
+
+        result = f"Polygon(\n"
+        batch, out, source = tuple(self.l_coefs.shape)
+        result += f"  shape: ({batch=}, {out=}, {source=})\n\n"
         for b in range(batch):
-            for j in range(outputs):
+            for j in range(out):
                 result += f"  o{j} ∈ [{lb[b, j]:.0f}, {ub[b, j]:.0f}]\n"
                 l_coefs = " + ".join(
-                    f"({c} × z{i})" for i, c in enumerate(self.l_coefs[j])
+                    f"({c} × z{i})" for i, c in enumerate(self.l_coefs[b, j])
                 )
                 result += f"  o{j} ≥ {self.l_bias[b, j]:.0f} + {l_coefs}\n"
                 u_coefs = " + ".join(
-                    f"({c} × z{i})" for i, c in enumerate(self.u_coefs[j])
+                    f"({c} × z{i})" for i, c in enumerate(self.u_coefs[b, j])
                 )
                 result += f"  o{j} ≤ {self.u_bias[b, j]:.0f} + {u_coefs}\n"
                 result += "\n"
@@ -56,13 +60,15 @@ class Polygon:
         input_size = torch.prod(torch.tensor(dims)).item()
 
         polygon = Polygon(
-            l_coefs=torch.eye(input_size).repeat(batch, 1),
+            l_coefs=torch.eye(input_size).repeat(batch, 1, 1),
             l_bias=torch.zeros((batch, input_size)),
-            u_coefs=torch.eye(input_size).repeat(batch, 1),
+            u_coefs=torch.eye(input_size).repeat(batch, 1, 1),
             u_bias=torch.zeros((batch, input_size)),
             input_tensor=input_tensor,
             eps=eps,
         )
+        # print(torch.eye(input_size).shape)
+        # print(torch.eye(input_size).repeat(batch, 1, 1).shape)
         logging.debug(f"Created Polygon\n{polygon}")
 
         return polygon
@@ -131,6 +137,7 @@ class LinearTransformer(torch.nn.Module):
         - x shape: (batch, in, input_size)
         - output shape: (batch, out,  input_size)
         """
+        logging.debug(f"Linear layer input:\n{x}")
         l_coefs = (
             torch.clamp(self.weight, min=0) @ x.l_coefs
             + torch.clamp(self.weight, max=0) @ x.u_coefs
@@ -156,5 +163,5 @@ class LinearTransformer(torch.nn.Module):
             input_tensor=x.input_tensor,
             eps=x.eps,
         )
-        logging.debug(f"Linear layer outputs Polygon {polygon}")
+        logging.debug(f"Linear layer output:\n{polygon}")
         return polygon

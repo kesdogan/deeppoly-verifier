@@ -28,6 +28,7 @@ def analyze(
     )
     final_layer_weights[:, true_label] = 1.0
     final_layer.weight.data = final_layer_weights
+    final_layer.bias.data[:] = 0.0
 
     net_layers = list(net.children()) + [final_layer]
 

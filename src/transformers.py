@@ -27,8 +27,6 @@ class Polygon:
 
     # TODO Shape of l_coefs doesn't have a batch
     def __str__(self) -> str:
-        print(self.l_coefs.shape)
-        print(self.l_bias.shape)
         lb, ub = self.evaluate()
 
         result = f"Polygon(\n"
@@ -57,29 +55,19 @@ class Polygon:
         i.e. behaves like an identity layer where out == source.
         """
         batch, *dims = input_tensor.shape
-        input_size = torch.prod(torch.tensor(dims)).item()
+        input_size = int(torch.prod(torch.tensor(dims)).item())
 
         polygon = Polygon(
             l_coefs=torch.eye(input_size).repeat(batch, 1, 1),
-            l_bias=torch.zeros((batch, input_size)),
+            l_bias=torch.zeros(batch, input_size),
             u_coefs=torch.eye(input_size).repeat(batch, 1, 1),
-            u_bias=torch.zeros((batch, input_size)),
+            u_bias=torch.zeros(batch, input_size),
             input_tensor=input_tensor,
             eps=eps,
         )
-        # print(torch.eye(input_size).shape)
-        # print(torch.eye(input_size).repeat(batch, 1, 1).shape)
         logging.debug(f"Created\n{polygon}")
 
         return polygon
-
-        # def _mul_last_k(self, x: Tensor, y: Tensor, k: int) -> Tensor:
-        #     """
-        #     Perform a scalar product on the last k dimensions of x and y.
-        #     """
-        #     assert x.shape == y.shape
-        #     shape = x.shape[:-k]
-        #     return torch.einsum("...i,...i->...", x.view(*shape, -1), y.view(*shape, -1))
 
     def _get_bound(self, lower: bool) -> Tensor:
         x = self.input_tensor.reshape(self.input_tensor.shape[0], -1)

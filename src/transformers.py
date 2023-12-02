@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 from torch import Tensor
@@ -23,9 +24,16 @@ class Polygon:
     l_bound: Tensor  # (batch, out)
     u_bound: Tensor  # (batch, out)
 
-    parent: "Polygon" or None
+    parent: Optional["Polygon"]
 
-    def __init__(self, l_coefs: Tensor, u_coefs: Tensor, l_bias: Tensor, u_bias: Tensor, parent: "Polygon" or None):
+    def __init__(
+        self,
+        l_coefs: Tensor,
+        u_coefs: Tensor,
+        l_bias: Tensor,
+        u_bias: Tensor,
+        parent: Optional["Polygon"],
+    ):
         self.l_coefs = l_coefs
         self.u_coefs = u_coefs
         self.l_bias = l_bias
@@ -33,27 +41,56 @@ class Polygon:
         self.parent = parent
 
         # Repeated back-substitution to calculate the bounds
+
         while parent is not None:
             # TODO consider early stopping if there is no dependency on the parent
 
             l_coefs_new = (
-                    torch.clamp(l_coefs, min=0) @ parent.l_coefs
-                    + torch.clamp(l_coefs, max=0) @ parent.u_coefs
+                torch.clamp(l_coefs, min=0) @ parent.l_coefs
+                + torch.clamp(l_coefs, max=0) @ parent.u_coefs
             )
-            u_coefs_new = (
-                    torch.clamp(u_coefs, min=0) @ parent.u_coefs
-                    + torch.clamp(u_coefs, max=0) @ parent.l_coefs
-            )
-            l_bias_new = l_bias + (
-                    (torch.clamp(l_coefs, min=0) * parent.l_bias.unsqueeze(1)).sum(-1)
-                    + (torch.clamp(l_coefs, max=0) * parent.u_bias.unsqueeze(1)).sum(-1)
-            )
-            u_bias_new = u_bias + (
-                    (torch.clamp(u_coefs, min=0) * parent.u_bias.unsqueeze(1)).sum(-1)
-                    + (torch.clamp(u_coefs, max=0) * parent.l_bias.unsqueeze(1)).sum(-1)
-            )
+            l_coefs_new_2 = torch.zeros_like(l_coefs_new)
 
-            l_coefs, u_coefs, l_bias, u_bias = l_coefs_new, u_coefs_new, l_bias_new, u_bias_new
+            u_coefs_new = (
+                torch.clamp(u_coefs, min=0) @ parent.u_coefs
+                + torch.clamp(u_coefs, max=0) @ parent.l_coefs
+            )
+            u_coefs_new_2 = torch.zeros_like(u_coefs_new)
+
+            l_bias_new = l_bias + (
+                (torch.clamp(l_coefs, min=0) * parent.l_bias.unsqueeze(1)).sum(-1)
+                + (torch.clamp(l_coefs, max=0) * parent.u_bias.unsqueeze(1)).sum(-1)
+            )
+            l_bias_new_2 = torch.zeros_like(l_bias_new)
+
+            u_bias_new = u_bias + (
+                (torch.clamp(u_coefs, min=0) * parent.u_bias.unsqueeze(1)).sum(-1)
+                + (torch.clamp(u_coefs, max=0) * parent.l_bias.unsqueeze(1)).sum(-1)
+            )
+            u_bias_new_2 = torch.zeros_like(u_bias_new)
+
+            for out_i in range(l_coefs.shape[1]):
+                for in_i in range(l_coefs.shape[2]):
+                    coef = l_coefs[0, out_i, in_i].item()
+                    if coef > 0:
+                        l_coefs_new_2[0, out_i, :] += coef * parent.l_coefs[0, in_i, :]
+                        l_bias_new_2[0, out_i] += coef * parent.l_bias[0, in_i]
+
+                        u_coefs_new_2[0, out_i, :] += coef * parent.u_coefs[0, in_i, :]
+                        u_bias_new_2[0, out_i] += coef * parent.u_bias[0, in_i]
+                    else:
+                        l_coefs_new_2[0, out_i, :] += coef * parent.u_coefs[0, in_i, :]
+                        l_bias_new_2[0, out_i] += coef * parent.u_bias[0, in_i]
+
+                        u_coefs_new_2[0, out_i, :] += coef * parent.l_coefs[0, in_i, :]
+                        u_bias_new_2[0, out_i] += coef * parent.l_bias[0, in_i]
+
+            l_coefs, u_coefs, l_bias, u_bias = (
+                l_coefs_new_2,
+                u_coefs_new_2,
+                l_bias_new_2,
+                u_bias_new_2,
+            )
             parent = parent.parent
 
         self.l_bound = l_bias
@@ -90,8 +127,8 @@ class Polygon:
         input_size = torch.prod(torch.tensor(dims)).item()
 
         polygon = Polygon(
-            l_coefs=torch.zeros((batch, input_size, 0)),
-            u_coefs=torch.zeros((batch, input_size, 0)),
+            l_coefs=torch.zeros((batch, input_size, 1)),
+            u_coefs=torch.zeros((batch, input_size, 1)),
             l_bias=input_tensor.reshape((batch, input_size)) - eps,
             u_bias=input_tensor.reshape((batch, input_size)) + eps,
             # Setting parent=None will cause a trivial zero-step back substitution, which essentially sets
@@ -182,8 +219,10 @@ class ReLUTransformer(torch.nn.Module):
         l_bias[is_crossing] = 0
         # For upper bound, we calculate the slope 𝜆 and then apply  y ≤ 𝜆 * (x − l_x)
         slope = u_bound[is_crossing] / (u_bound[is_crossing] - l_bound[is_crossing])
-        u_coefs[is_crossing] = torch.eye(n=n).unsqueeze(0)[is_crossing] * slope.unsqueeze(-1)
-        u_bias[is_crossing] = - slope * l_bound[is_crossing]
+        u_coefs[is_crossing] = torch.eye(n=n).unsqueeze(0)[
+            is_crossing
+        ] * slope.unsqueeze(-1)
+        u_bias[is_crossing] = -slope * l_bound[is_crossing]
 
         polygon = Polygon(
             l_coefs=l_coefs,

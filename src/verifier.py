@@ -10,7 +10,7 @@ from utils.loading import parse_spec
 DEVICE = "cpu"
 
 torch.set_printoptions(threshold=10_000)
-#logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 
 
 def analyze(
@@ -27,6 +27,7 @@ def analyze(
         (final_layer_weights[:true_label], final_layer_weights[true_label + 1 :])
     )
     final_layer_weights[:, true_label] = 1.0
+
     final_layer.weight.data = final_layer_weights
     final_layer.bias.data[:] = 0.0
 
@@ -39,8 +40,8 @@ def analyze(
             transformer_layers.append(FlattenTransformer())
         elif isinstance(layer, torch.nn.Linear):
             transformer_layers.append(LinearTransformer(layer.weight, layer.bias))
-        elif isinstance(layer, torch.nn.ReLU):
-            transformer_layers.append(ReLUTransformer())
+        # elif isinstance(layer, torch.nn.ReLU):
+        #     transformer_layers.append(ReLUTransformer())
         else:
             raise Exception("Unknown layer type")
     polygon_model = nn.Sequential(*transformer_layers)
@@ -51,6 +52,9 @@ def analyze(
 
     # noinspection PyTypeChecker
     verified = torch.all(lower_bounds > 0).item()
+    print(f"The true label: {true_label}")
+    print(f"The lower bounds: {lower_bounds}")
+    print(f"The upper bounds: {upper_bounds}")
     return verified
 
 

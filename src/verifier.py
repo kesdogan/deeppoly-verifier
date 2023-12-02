@@ -52,9 +52,9 @@ def analyze(
 
     # noinspection PyTypeChecker
     verified = torch.all(lower_bounds > 0).item()
-    print(f"The true label: {true_label}")
-    print(f"The lower bounds: {lower_bounds}")
-    print(f"The upper bounds: {upper_bounds}")
+    logging.debug(f"The true label: {true_label}")
+    logging.debug(f"The lower bounds: {lower_bounds}")
+    logging.debug(f"The upper bounds: {upper_bounds}")
     return verified
 
 

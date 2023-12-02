@@ -49,53 +49,25 @@ class Polygon:
                 torch.clamp(l_coefs, min=0) @ parent.l_coefs
                 + torch.clamp(l_coefs, max=0) @ parent.u_coefs
             )
-            l_coefs_new_2 = torch.zeros_like(l_coefs_new)
-
             u_coefs_new = (
                 torch.clamp(u_coefs, min=0) @ parent.u_coefs
                 + torch.clamp(u_coefs, max=0) @ parent.l_coefs
             )
-            u_coefs_new_2 = torch.zeros_like(u_coefs_new)
 
             l_bias_new = l_bias + (
                 (torch.clamp(l_coefs, min=0) * parent.l_bias.unsqueeze(1)).sum(-1)
                 + (torch.clamp(l_coefs, max=0) * parent.u_bias.unsqueeze(1)).sum(-1)
             )
-            l_bias_new_2 = torch.zeros_like(l_bias_new) + l_bias
-
             u_bias_new = u_bias + (
                 (torch.clamp(u_coefs, min=0) * parent.u_bias.unsqueeze(1)).sum(-1)
                 + (torch.clamp(u_coefs, max=0) * parent.l_bias.unsqueeze(1)).sum(-1)
             )
-            u_bias_new_2 = torch.zeros_like(u_bias_new) + u_bias
-
-            for out_i in range(l_coefs.shape[1]):
-                for in_i in range(l_coefs.shape[2]):
-                    coef = l_coefs[0, out_i, in_i].item()
-                    if coef > 0:
-                        l_coefs_new_2[0, out_i, :] += coef * parent.l_coefs[0, in_i, :]
-                        l_bias_new_2[0, out_i] += coef * parent.l_bias[0, in_i]
-
-                        u_coefs_new_2[0, out_i, :] += coef * parent.u_coefs[0, in_i, :]
-                        u_bias_new_2[0, out_i] += coef * parent.u_bias[0, in_i]
-                    else:
-                        l_coefs_new_2[0, out_i, :] += coef * parent.u_coefs[0, in_i, :]
-                        l_bias_new_2[0, out_i] += coef * parent.u_bias[0, in_i]
-
-                        u_coefs_new_2[0, out_i, :] += coef * parent.l_coefs[0, in_i, :]
-                        u_bias_new_2[0, out_i] += coef * parent.l_bias[0, in_i]
-
-            epsilon = 0.0001
-            assert torch.all(torch.abs(l_coefs_new - l_coefs_new_2) < epsilon)
-            assert torch.all(torch.abs(u_coefs_new - u_coefs_new_2) < epsilon)
-            assert torch.all(torch.abs(l_bias_new - l_bias_new_2) < epsilon)
-            assert torch.all(torch.abs(u_bias_new - u_bias_new_2) < epsilon)
 
             l_coefs, u_coefs, l_bias, u_bias = (
-                l_coefs_new_2,
-                u_coefs_new_2,
-                l_bias_new_2,
-                u_bias_new_2,
+                l_coefs_new,
+                u_coefs_new,
+                l_bias_new,
+                u_bias_new,
             )
             parent = parent.parent
 
@@ -133,10 +105,10 @@ class Polygon:
         input_size = torch.prod(torch.tensor(dims)).item()
 
         polygon = Polygon(
-            l_coefs=torch.zeros((batch, input_size, 1)),
-            u_coefs=torch.zeros((batch, input_size, 1)),
-            l_bias=input_tensor.reshape((batch, input_size)) - eps,
-            u_bias=input_tensor.reshape((batch, input_size)) + eps,
+            l_coefs=torch.zeros((batch, input_size, 0)),
+            u_coefs=torch.zeros((batch, input_size, 0)),
+            l_bias=torch.clamp(input_tensor.reshape((batch, input_size)) - eps, min=0, max=1),
+            u_bias=torch.clamp(input_tensor.reshape((batch, input_size)) + eps, min=0, max=1),
             # Setting parent=None will cause a trivial zero-step back substitution, which essentially sets
             # l_bound, u_bound := l_bias, u_bias
             parent=None,

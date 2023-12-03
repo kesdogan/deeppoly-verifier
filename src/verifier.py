@@ -40,8 +40,8 @@ def analyze(
             transformer_layers.append(FlattenTransformer())
         elif isinstance(layer, torch.nn.Linear):
             transformer_layers.append(LinearTransformer(layer.weight, layer.bias))
-        # elif isinstance(layer, torch.nn.ReLU):
-        #     transformer_layers.append(ReLUTransformer())
+        elif isinstance(layer, torch.nn.ReLU):
+            transformer_layers.append(ReLUTransformer())
         else:
             raise Exception("Unknown layer type")
     polygon_model = nn.Sequential(*transformer_layers)

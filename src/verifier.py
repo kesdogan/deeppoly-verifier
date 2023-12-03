@@ -43,7 +43,7 @@ def analyze(
         elif isinstance(layer, torch.nn.ReLU):
             transformer_layers.append(ReLUTransformer())
         else:
-            raise Exception("Unknown layer type")
+            raise Exception(f"Unknown layer type {layer.__class__.__name__}")
     polygon_model = nn.Sequential(*transformer_layers)
 
     in_polygon = Polygon.create_from_input(inputs, eps=eps)

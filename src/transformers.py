@@ -166,34 +166,6 @@ class ReLUTransformer(torch.nn.Module):
     def __init__(self):
         super().__init__()
 
-    def relu_I(self, l_bound, u_bound, l_coefs, l_bias, u_coefs, u_bias, is_crossing):
-        _, n = l_coefs.shape[:2]
-        # For lower bound we clip the inequality to 0
-        l_coefs[is_crossing] = 0
-        l_bias[is_crossing] = 0
-        # For upper bound, we calculate the slope 𝜆 and then apply  y ≤ 𝜆 * (x − l_x)
-        slope = u_bound[is_crossing] / (u_bound[is_crossing] - l_bound[is_crossing])
-        u_coefs[is_crossing] = torch.eye(n=n).unsqueeze(0)[
-            is_crossing
-        ] * slope.unsqueeze(-1)
-        u_bias[is_crossing] = -slope * l_bound[is_crossing]
-
-        return l_coefs, l_bias, u_coefs, u_bias
-
-    def relu_II(self, l_bound, u_bound, l_coefs, l_bias, u_coefs, u_bias, is_crossing):
-        _, n = l_coefs.shape[:2]
-        # For lower bound, we apply y ≥ x
-        l_coefs[is_crossing] = torch.eye(n=n).unsqueeze(0)[is_crossing]
-        l_bias[is_crossing] = 0
-        # For upper bound, we calculate the slope 𝜆 and then apply  y ≤ 𝜆 * (x − l_x)
-        slope = u_bound[is_crossing] / (u_bound[is_crossing] - l_bound[is_crossing])
-        u_coefs[is_crossing] = torch.eye(n=n).unsqueeze(0)[
-            is_crossing
-        ] * slope.unsqueeze(-1)
-        u_bias[is_crossing] = -slope * l_bound[is_crossing]
-
-        return l_coefs, l_bias, u_coefs, u_bias
-
     def forward(self, x: Polygon) -> Polygon:
         """
         - x shape: (batch, out, in)
@@ -210,34 +182,23 @@ class ReLUTransformer(torch.nn.Module):
         is_always_negative: torch.Tensor = u_bound <= 0
         # In this case the output of this neuron is always 0 regardless of the network input,
         # so we clip both the lower and upper constraint inequalities to 0
-        l_coefs[is_always_negative] = 0
-        u_coefs[is_always_negative] = 0
-        l_bias[is_always_negative] = 0
-        u_bias[is_always_negative] = 0
-
         is_always_positive: torch.Tensor = l_bound >= 0
         # In this case the output of this neuron is always equal to the previous neuron's output
         l_coefs[is_always_positive] = torch.eye(n=n).unsqueeze(0)[is_always_positive]
         u_coefs[is_always_positive] = torch.eye(n=n).unsqueeze(0)[is_always_positive]
-        l_bias[is_always_positive] = 0
-        u_bias[is_always_positive] = 0
 
         is_crossing = ~(is_always_negative | is_always_positive)
-
-        poly_I = self.relu_I(
-            l_bound, u_bound, l_coefs, l_bias, u_coefs, u_bias, is_crossing
-        )
-
-        poly_II = self.relu_II(
-            l_bound, u_bound, l_coefs, l_bias, u_coefs, u_bias, is_crossing
-        )
-
+        relaxation_II = is_crossing & (u_bound > -l_bound)
         # Pick the ReLU relaxation based on the minimal area heuristic
         # See Exercise 4.1 a)
-        final_poly = []
-        for a, b in zip(poly_I, poly_II):
-            final_poly.append(torch.where(u_bound <= -l_bound, a, b))
-        l_coefs, l_bias, u_coefs, u_bias = final_poly
+        # Relaxation I: For lower bound we clip the inequality to y ≥ 0
+        # Relaxation II: For lower bound, we apply y ≥ x
+        l_coefs[relaxation_II] = torch.eye(n=n).unsqueeze(0)[relaxation_II]
+
+        # For upper bound, we calculate the slope 𝜆 and then apply  y ≤ 𝜆 * (x − l_x)
+        slope = u_bound[is_crossing] / (u_bound[is_crossing] - l_bound[is_crossing])
+        u_coefs[is_crossing] = torch.eye(n=n).unsqueeze(0)[is_crossing] * slope.unsqueeze(-1)
+        u_bias[is_crossing] = -slope * l_bound[is_crossing]
 
         polygon = Polygon(
             l_coefs=l_coefs,

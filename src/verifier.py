@@ -1,7 +1,7 @@
 import argparse
 import time
-from pprint import pprint
 
+import numpy as np
 import torch
 import torch.nn as nn
 from networks import get_network
@@ -12,17 +12,19 @@ from transformers import (
     Polygon,
 )
 from utils.loading import parse_spec
-import numpy as np
 
 DEVICE = "cpu"
 
 torch.set_printoptions(threshold=10_000)
 # logging.basicConfig(level=logging.DEBUG)
 
+
 def output_size(conv, wh):
     w, h = wh
-    output = [  (wh[0] + 2 * conv.padding[0] - conv.kernel_size[0]) // conv.stride[0] + 1,
-                (wh[1] + 2 * conv.padding[1] - conv.kernel_size[1]) // conv.stride[1] + 1]
+    output = [
+        (wh[0] + 2 * conv.padding[0] - conv.kernel_size[0]) // conv.stride[0] + 1,
+        (wh[1] + 2 * conv.padding[1] - conv.kernel_size[1]) // conv.stride[1] + 1,
+    ]
     return output
 
 
@@ -33,7 +35,6 @@ def encode_loc(tup, shape):
         residual = residual + coefficient * tup[i]
         coefficient = coefficient * shape[i]
     return residual
-
 
 
 def conv_linear(conv, wh):
@@ -55,13 +56,19 @@ def conv_linear(conv, wh):
                 for xd in range(conv.kernel_size[0]):
                     for yd in range(conv.kernel_size[1]):
                         for c1 in range(conv.out_channels):
-                            fc.bias[encode_loc((c1, x_0, y_0), out_shape)] = conv.bias[c1]
+                            fc.bias[encode_loc((c1, x_0, y_0), out_shape)] = conv.bias[
+                                c1
+                            ]
                             for c2 in range(conv.in_channels):
                                 if 0 <= x_00 + xd < w and 0 <= y_00 + yd < h:
                                     cw = conv.weight[c1, c2, xd, yd]
-                                    fc.weight[encode_loc((c1, x_0, y_0), out_shape), encode_loc((c2, x_00 + xd, y_00 + yd), in_shape)] = cw
+                                    fc.weight[
+                                        encode_loc((c1, x_0, y_0), out_shape),
+                                        encode_loc(
+                                            (c2, x_00 + xd, y_00 + yd), in_shape
+                                        ),
+                                    ] = cw
         return fc
-
 
 
 def analyze(
@@ -75,7 +82,8 @@ def analyze(
 
     # add the 'batch' dimension
     inputs = inputs.unsqueeze(0)
-    flattend = False; num_conv = 0
+    flattend = False
+    num_conv = 0
 
     input_size = [(inputs.shape[-2], inputs.shape[-1])]
     for layer in net.children():
@@ -83,7 +91,7 @@ def analyze(
             break
         else:
             input_size.append(tuple(output_size(layer, input_size[num_conv])))
-            num_conv +=1
+            num_conv += 1
 
     n_classes = list(net.children())[-1].out_features
     final_layer = torch.nn.Linear(in_features=n_classes, out_features=n_classes - 1)
@@ -130,7 +138,6 @@ def analyze(
         transformer_layers.append(transformer)
     polygon_model = nn.Sequential(*transformer_layers)
 
-    # TODO Run 10 agents
     trainable = len(list(polygon_model.parameters())) > 0
 
     if gt is not None and gt == False:

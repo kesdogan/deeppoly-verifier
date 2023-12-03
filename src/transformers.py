@@ -193,16 +193,20 @@ class LeakyReLUTransformer(torch.nn.Module):
 
         # Crossing
         is_crossing = ~(is_always_negative | is_always_positive)
-        # For upper bound, we calculate the slope 𝜆 and then apply  y ≤ 𝜆 * (x − l_x)
+        # If negative_slope <= 1, the slope sets upper bound, otherwise sets lower bound
+        slope_bound_coefs, slope_bound_bias, alpha_bound_coefs, alpha_bound_bias = (
+            (u_coefs, u_bias, l_coefs, l_bias) if self.negative_slope <= 1 else (l_coefs, l_bias, u_coefs, u_bias)
+        )
+        # Calculate the slope 𝜆 that connects the two edge points
         slope = (u_bound[is_crossing] - self.negative_slope * l_bound[is_crossing]) \
                 / (u_bound[is_crossing] - l_bound[is_crossing])
-        u_coefs[is_crossing] *= slope.unsqueeze(-1)
-        u_bias[is_crossing] = l_bound[is_crossing] * (self.negative_slope - slope)
-        # For lower bound, pick the ReLU relaxation based on the minimal area heuristic
-        # (the criterion is the same for LeakyReLU as for ReLU)
-        # Relaxation I: For lower bound we clip the inequality to y ≥ negative_slope
-        l_coefs[is_crossing & (u_bound <= -l_bound)] *= self.negative_slope
-        # Relaxation II: For lower bound, we apply y ≥ x (values same as initialized)
+        slope_bound_coefs[is_crossing] *= slope.unsqueeze(-1)
+        slope_bound_bias[is_crossing] = l_bound[is_crossing] * (self.negative_slope - slope)
+        # For alpha bound, pick the ReLU relaxation based on the minimal area heuristic
+        # (the criterion is the same for LeakyReLU as for ReLU and does not depend on negative_slope)
+        # Relaxation I: bound by y = negative_slope
+        alpha_bound_coefs[is_crossing & (u_bound <= -l_bound)] *= self.negative_slope
+        # Relaxation II: bound by y = x (values same as initialized)
 
         polygon = Polygon(
             l_coefs=l_coefs,

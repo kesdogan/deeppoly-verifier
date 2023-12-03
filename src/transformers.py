@@ -161,12 +161,12 @@ class LinearTransformer(torch.nn.Module):
         return polygon
 
 
-class ReLUTransformer(torch.nn.Module):
-    def __init__(self):
+class LeakyReLUTransformer(torch.nn.Module):
+    negative_slope: float
+
+    def __init__(self, negative_slope: float):
         super().__init__()
-        # The trainable alpha parameter, with default value of 0 (i.e. relu I)
-        # TODO: Change this to have a dimension of (batch, out)
-        self.alpha = torch.nn.Parameter(torch.ones((1, 1)))
+        self.negative_slope = negative_slope
 
     def forward(self, x: Polygon) -> Polygon:
         """
@@ -176,38 +176,33 @@ class ReLUTransformer(torch.nn.Module):
         l_bound, u_bound = x.evaluate()
         batch, n = x.l_coefs.shape[:2]
 
-        l_coefs = torch.zeros((batch, n, n))
-        u_coefs = torch.zeros((batch, n, n))
+        # Initialize coefficients and biases
+        l_coefs = torch.eye(n=n).unsqueeze(0)
+        u_coefs = torch.eye(n=n).unsqueeze(0)
         l_bias = torch.zeros((batch, n))
         u_bias = torch.zeros((batch, n))
 
+        # Always negative
         is_always_negative: torch.Tensor = u_bound <= 0
-        # In this case the output of this neuron is always 0,
-        # so we clip both the lower and upper constraint inequalities to 0
-        l_coefs[is_always_negative] = 0
-        u_coefs[is_always_negative] = 0
-        l_bias[is_always_negative] = 0
-        u_bias[is_always_negative] = 0
+        l_coefs[is_always_negative] *= self.negative_slope
+        u_coefs[is_always_negative] *= self.negative_slope
 
+        # Always positive (values same as initialized)
         is_always_positive: torch.Tensor = l_bound >= 0
-        # In this case the output of this neuron is always equal to the previous neuron's output
-        l_coefs[is_always_positive] = torch.eye(n=n).unsqueeze(0)[is_always_positive]
-        u_coefs[is_always_positive] = torch.eye(n=n).unsqueeze(0)[is_always_positive]
-        l_bias[is_always_positive] = 0
-        u_bias[is_always_positive] = 0
 
+        # Crossing
         is_crossing = ~(is_always_negative | is_always_positive)
-
-        # For lower bound, we apply y ≥ 𝛼x
-        l_coefs[is_crossing] = self.alpha * torch.eye(n=n).unsqueeze(0)[is_crossing]
-        l_bias[is_crossing] = 0
-
         # For upper bound, we calculate the slope 𝜆 and then apply  y ≤ 𝜆 * (x − l_x)
-        slope = u_bound[is_crossing] / (u_bound[is_crossing] - l_bound[is_crossing])
-        u_coefs[is_crossing] = torch.eye(n=n).unsqueeze(0)[
-            is_crossing
-        ] * slope.unsqueeze(-1)
-        u_bias[is_crossing] = -slope * l_bound[is_crossing]
+        slope = (u_bound[is_crossing] - self.negative_slope * l_bound[is_crossing]) / (
+            u_bound[is_crossing] - l_bound[is_crossing]
+        )
+        u_coefs[is_crossing] *= slope.unsqueeze(-1)
+        u_bias[is_crossing] = l_bound[is_crossing] * (self.negative_slope - slope)
+        # For lower bound, pick the ReLU relaxation based on the minimal area heuristic
+        # (the criterion is the same for LeakyReLU as for ReLU)
+        # Relaxation I: For lower bound we clip the inequality to y ≥ negative_slope
+        l_coefs[is_crossing & (u_bound <= -l_bound)] *= self.negative_slope
+        # Relaxation II: For lower bound, we apply y ≥ x (values same as initialized)
 
         polygon = Polygon(
             l_coefs=l_coefs,

@@ -4,7 +4,7 @@ import logging
 import torch
 import torch.nn as nn
 from networks import get_network
-from transformers import FlattenTransformer, LinearTransformer, Polygon, ReLUTransformer
+from transformers import FlattenTransformer, LinearTransformer, Polygon, LeakyReLUTransformer
 from utils.loading import parse_spec
 
 DEVICE = "cpu"
@@ -41,7 +41,9 @@ def analyze(
         elif isinstance(layer, torch.nn.Linear):
             transformer_layers.append(LinearTransformer(layer.weight, layer.bias))
         elif isinstance(layer, torch.nn.ReLU):
-            transformer_layers.append(ReLUTransformer())
+            transformer_layers.append(LeakyReLUTransformer(0.0))
+        elif isinstance(layer, torch.nn.LeakyReLU):
+            transformer_layers.append(LeakyReLUTransformer(layer.negative_slope))
         else:
             raise Exception(f"Unknown layer type {layer.__class__.__name__}")
     polygon_model = nn.Sequential(*transformer_layers)

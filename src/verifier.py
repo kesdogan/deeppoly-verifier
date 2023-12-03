@@ -1,5 +1,5 @@
 import argparse
-import multiprocessing
+import time
 from pprint import pprint
 
 import torch
@@ -22,6 +22,8 @@ torch.set_printoptions(threshold=10_000)
 def analyze(
     net: torch.nn.Sequential, inputs: torch.Tensor, eps: float, true_label: int
 ) -> bool:
+    start_time = time.time()
+
     # add the 'batch' dimension
     inputs = inputs.unsqueeze(0)
 
@@ -64,7 +66,17 @@ def analyze(
     polygon_model = nn.Sequential(*transformer_layers)
 
     # TODO Run 10 agents
-    verified = train(polygon_model=polygon_model, in_polygon=in_polygon, epochs=1000)
+    trainable = len(list(polygon_model.parameters())) > 0
+    if trainable:
+        verified = train(
+            polygon_model=polygon_model, in_polygon=in_polygon, epochs=1000
+        )
+    else:
+        out_polygon: Polygon = polygon_model(in_polygon)
+        lower_bounds, _ = out_polygon.evaluate()
+        verified: bool = torch.all(lower_bounds > 0).item()  # type: ignore
+
+    print(f"The computation took {time.time() - start_time:.1f} seconds")
 
     return verified
 
@@ -84,7 +96,7 @@ def train(
         out_polygon: Polygon = polygon_model(in_polygon)
         lower_bounds, _ = out_polygon.evaluate()
         loss = lower_bounds.clamp(max=0).abs().sum()
-        print(f"Epoch: {epoch:4d}, loss: {loss.item():.3f}")
+        # print(f"Epoch: {epoch:4d}, loss: {loss.item():.3f}")
 
         verified: bool = torch.all(lower_bounds > 0).item()  # type: ignore
 

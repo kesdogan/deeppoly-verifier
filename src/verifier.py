@@ -10,7 +10,7 @@ from utils.loading import parse_spec
 DEVICE = "cpu"
 
 torch.set_printoptions(threshold=10_000)
-# logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.WARNING)
 
 
 def analyze(
@@ -39,23 +39,45 @@ def analyze(
         if isinstance(layer, torch.nn.Flatten):
             transformer_layers.append(FlattenTransformer())
         elif isinstance(layer, torch.nn.Linear):
-            transformer_layers.append(LinearTransformer(layer.weight, layer.bias))
+            weight, bias = layer.weight.data, layer.bias.data
+            transformer_layers.append(LinearTransformer(weight, bias))
         elif isinstance(layer, torch.nn.ReLU):
             transformer_layers.append(ReLUTransformer())
         else:
             raise Exception("Unknown layer type")
     polygon_model = nn.Sequential(*transformer_layers)
+    in_polygon: Polygon = Polygon.create_from_input(inputs, eps=eps)
 
-    in_polygon = Polygon.create_from_input(inputs, eps=eps)
-    out_polygon = polygon_model(in_polygon)
-    lower_bounds, upper_bounds = out_polygon.evaluate()
+    verified = train(polygon_model=polygon_model, in_polygon=in_polygon, epochs=10)
 
-    # noinspection PyTypeChecker
-    verified = torch.all(lower_bounds > 0).item()
-    logging.debug(f"The true label: {true_label}")
-    logging.debug(f"The lower bounds: {lower_bounds}")
-    logging.debug(f"The upper bounds: {upper_bounds}")
     return verified
+
+
+def train(
+    polygon_model: torch.nn.Sequential,
+    in_polygon: Polygon,
+    epochs: int | None = None,
+):
+    optimizer = torch.optim.Adam(polygon_model.parameters())
+
+    print(list(polygon_model.named_parameters()))
+
+    epoch = 1
+    verified = False
+    # TODO Maybe check the delta in loss?
+    while not verified or (epochs is not None and epoch > epochs):
+        print(f"Epoch: {epoch}")
+        out_polygon: Polygon = polygon_model(in_polygon)
+        lower_bounds, upper_bounds = out_polygon.evaluate()
+        loss = lower_bounds.clamp(max=0).abs().sum()
+
+        verified: bool = torch.all(lower_bounds > 0).item()  # type: ignore
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+    return polygon_model
 
 
 def main():

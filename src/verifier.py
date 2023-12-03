@@ -184,6 +184,11 @@ def train(
         loss.backward()
         optimizer.step()
 
+        # Clamp all alpha values after each step
+        for layer in polygon_model.children():
+            if isinstance(layer, LeakyReLUTransformer):
+                layer.clamp()
+
         epoch += 1
 
     return verified

@@ -229,3 +229,6 @@ class LeakyReLUTransformer(torch.nn.Module):
         logging.debug(f"ReLU alpha: {self.alpha}")
         logging.debug(f"ReLU output:\n{polygon}")
         return polygon
+
+    def clamp(self):
+        self.alpha.data.clamp_(min=0, max=1.0)

@@ -20,7 +20,11 @@ torch.set_printoptions(threshold=10_000)
 
 
 def analyze(
-    net: torch.nn.Sequential, inputs: torch.Tensor, eps: float, true_label: int
+    net: torch.nn.Sequential,
+    inputs: torch.Tensor,
+    eps: float,
+    true_label: int,
+    gt: bool,
 ) -> bool:
     start_time = time.time()
 
@@ -67,9 +71,17 @@ def analyze(
 
     # TODO Run 10 agents
     trainable = len(list(polygon_model.parameters())) > 0
+
+    if gt is not None and gt == False:
+        epochs = 10
+        print(
+            f"WARNING: Since GT is False I set epochs to {epochs} to save time. REMOVE AFTER TESTING."
+        )
+    else:
+        epochs = 1000
     if trainable:
         verified = train(
-            polygon_model=polygon_model, in_polygon=in_polygon, epochs=1000
+            polygon_model=polygon_model, in_polygon=in_polygon, epochs=epochs
         )
     else:
         out_polygon: Polygon = polygon_model(in_polygon)
@@ -107,6 +119,14 @@ def train(
         epoch += 1
 
     return verified
+
+
+def get_gt(net, spec):
+    with open("test_cases/gt.txt", "r") as f:
+        for line in f.read().splitlines():
+            model, fl, answer = line.split(",")
+            if model == net and fl in spec:
+                return answer
 
 
 def main():
@@ -155,19 +175,16 @@ def main():
     pred_label = out.max(dim=1)[1].item()
     assert pred_label == true_label
 
-    verified = analyze(net, image, eps, true_label)
+    gt = get_gt(args.net, args.spec)
+    verified = analyze(net, image, eps, true_label, gt == "verified")
     verified_text = "verified" if verified else "not verified"
     print(verified_text)
 
     if args.check:
-        with open("test_cases/gt.txt", "r") as f:
-            for line in f.read().splitlines():
-                model, fl, answer = line.split(",")
-                if model == args.net and fl in args.spec:
-                    if verified_text == answer:
-                        print("^ correct\n")
-                    else:
-                        print(f"incorrect, expected {answer}\n")
+        if verified_text == gt:
+            print("^ correct\n")
+        else:
+            print(f"incorrect, expected {gt}\n")
 
 
 if __name__ == "__main__":

@@ -164,9 +164,16 @@ class LinearTransformer(torch.nn.Module):
 class LeakyReLUTransformer(torch.nn.Module):
     negative_slope: float
 
-    def __init__(self, negative_slope: float):
+    def __init__(self, negative_slope: float, init_polygon: Polygon):
         super().__init__()
         self.negative_slope = negative_slope
+
+        # Heuristic initialization
+        l_bound, u_bound = init_polygon.evaluate()
+        _, n = init_polygon.l_coefs.shape[:2]
+        l_coefs = torch.eye(n=n).unsqueeze(0)  # Init as y ≥ x
+        l_coefs[(u_bound <= -l_bound)] *= self.negative_slope
+        self.alpha = torch.nn.Parameter(l_coefs)
 
     def forward(self, x: Polygon) -> Polygon:
         """
@@ -177,7 +184,7 @@ class LeakyReLUTransformer(torch.nn.Module):
         batch, n = x.l_coefs.shape[:2]
 
         # Initialize coefficients and biases
-        l_coefs = torch.eye(n=n).unsqueeze(0)
+        l_coefs = self.alpha * torch.eye(n=n).unsqueeze(0)
         u_coefs = torch.eye(n=n).unsqueeze(0)
         l_bias = torch.zeros((batch, n))
         u_bias = torch.zeros((batch, n))
@@ -200,9 +207,9 @@ class LeakyReLUTransformer(torch.nn.Module):
         u_bias[is_crossing] = l_bound[is_crossing] * (self.negative_slope - slope)
         # For lower bound, pick the ReLU relaxation based on the minimal area heuristic
         # (the criterion is the same for LeakyReLU as for ReLU)
-        # Relaxation I: For lower bound we clip the inequality to y ≥ negative_slope
-        l_coefs[is_crossing & (u_bound <= -l_bound)] *= self.negative_slope
-        # Relaxation II: For lower bound, we apply y ≥ x (values same as initialized)
+        # # Relaxation I: For lower bound we clip the inequality to y ≥ negative_slope
+        # l_coefs[is_crossing & (u_bound <= -l_bound)] *= self.negative_slope
+        # # Relaxation II: For lower bound, we apply y ≥ x (values same as initialized)
 
         polygon = Polygon(
             l_coefs=l_coefs,
@@ -211,6 +218,6 @@ class LeakyReLUTransformer(torch.nn.Module):
             u_bias=u_bias,
             parent=x,
         )
-        logging.warning(f"ReLU alpha: {self.alpha[0, 0]}")
+        logging.debug(f"ReLU alpha: {self.alpha}")
         logging.debug(f"ReLU output:\n{polygon}")
         return polygon

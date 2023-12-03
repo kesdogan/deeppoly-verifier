@@ -1,16 +1,22 @@
 import argparse
-import logging
+import multiprocessing
+from pprint import pprint
 
 import torch
 import torch.nn as nn
 from networks import get_network
-from transformers import FlattenTransformer, LinearTransformer, Polygon, LeakyReLUTransformer
+from transformers import (
+    FlattenTransformer,
+    LeakyReLUTransformer,
+    LinearTransformer,
+    Polygon,
+)
 from utils.loading import parse_spec
 
 DEVICE = "cpu"
 
 torch.set_printoptions(threshold=10_000)
-logging.basicConfig(level=logging.WARNING)
+# # logging.basicConfig(level=logging.WARNING)
 
 
 def analyze(
@@ -35,22 +41,30 @@ def analyze(
 
     # Construct a model like net that passes Polygon through each layer
     transformer_layers = []
+    in_polygon: Polygon = Polygon.create_from_input(inputs, eps=eps)
+    x = in_polygon
     for layer in net_layers:
         if isinstance(layer, torch.nn.Flatten):
-            transformer_layers.append(FlattenTransformer())
+            transformer = FlattenTransformer()
+            transformer_layers.append(transformer)
+            x = transformer(x)
         elif isinstance(layer, torch.nn.Linear):
             weight, bias = layer.weight.data, layer.bias.data
-            transformer_layers.append(LinearTransformer(weight, bias))
+            transformer = LinearTransformer(weight, bias)
         elif isinstance(layer, torch.nn.ReLU):
-            transformer_layers.append(LeakyReLUTransformer(0.0))
+            transformer = LeakyReLUTransformer(negative_slope=0.0, init_polygon=x)
         elif isinstance(layer, torch.nn.LeakyReLU):
-            transformer_layers.append(LeakyReLUTransformer(layer.negative_slope))
+            transformer = LeakyReLUTransformer(
+                negative_slope=layer.negative_slope, init_polygon=x
+            )
         else:
             raise Exception(f"Unknown layer type {layer.__class__.__name__}")
+        x = transformer(x)
+        transformer_layers.append(transformer)
     polygon_model = nn.Sequential(*transformer_layers)
-    in_polygon: Polygon = Polygon.create_from_input(inputs, eps=eps)
 
-    verified = train(polygon_model=polygon_model, in_polygon=in_polygon, epochs=10)
+    # TODO Run 10 agents
+    verified = train(polygon_model=polygon_model, in_polygon=in_polygon, epochs=1000)
 
     return verified
 
@@ -62,16 +76,15 @@ def train(
 ):
     optimizer = torch.optim.Adam(polygon_model.parameters())
 
-    print(list(polygon_model.named_parameters()))
-
     epoch = 1
     verified = False
-    # TODO Maybe check the delta in loss?
-    while not verified or (epochs is not None and epoch > epochs):
-        print(f"Epoch: {epoch}")
+    # TODO Maybe check the delta in loss to stop early?
+    # TODO ...but only for testing, bc in submission we can safely time out
+    while not verified and (epochs is None or epoch <= epochs):
         out_polygon: Polygon = polygon_model(in_polygon)
-        lower_bounds, upper_bounds = out_polygon.evaluate()
+        lower_bounds, _ = out_polygon.evaluate()
         loss = lower_bounds.clamp(max=0).abs().sum()
+        print(f"Epoch: {epoch:4d}, loss: {loss.item():.3f}")
 
         verified: bool = torch.all(lower_bounds > 0).item()  # type: ignore
 
@@ -79,7 +92,9 @@ def train(
         loss.backward()
         optimizer.step()
 
-    return polygon_model
+        epoch += 1
+
+    return verified
 
 
 def main():

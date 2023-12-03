@@ -215,8 +215,8 @@ class LeakyReLUTransformer(torch.nn.Module):
         )
         # For alpha bound, pick the ReLU relaxation based on the minimal area heuristic
         # (the criterion is the same for LeakyReLU as for ReLU and does not depend on negative_slope)
-        # Relaxation I: bound by y = negative_slope
-        alpha_bound_coefs[is_crossing & (u_bound <= -l_bound)] *= self.negative_slope
+        # # Relaxation I: bound by y = negative_slope
+        # alpha_bound_coefs[is_crossing & (u_bound <= -l_bound)] *= self.negative_slope
         # Relaxation II: bound by y = x (values same as initialized)
 
         polygon = Polygon(

@@ -219,8 +219,9 @@ class LeakyReLUTransformer(torch.nn.Module):
         # Relaxation I: bound by y = negative_slope
         # Relaxation II: bound by y = x (values same as initialized)
         # Relaxation with Alpha: interpolate the bound between negative_slope and x
-        alpha_bound_coefs[is_crossing] = self.alpha[is_crossing] * (
-                    alpha_bound_coefs[is_crossing] - self.negative_slope) + self.negative_slope
+        negative_slope_coefs = torch.eye(n=n).unsqueeze(0)[is_crossing] * self.negative_slope
+        alpha_bound_coefs[is_crossing] = self.alpha[is_crossing].unsqueeze(-1) * (
+                alpha_bound_coefs[is_crossing] - negative_slope_coefs) + negative_slope_coefs
 
         polygon = Polygon(
             l_coefs=l_coefs,

@@ -1,7 +1,7 @@
 import argparse
 import logging
 import time
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -139,11 +139,11 @@ def analyze(
 
     trainable = len(list(polygon_model.parameters())) > 0
     epochs = 100 if trainable else 1
-    verified = train(
+    verified, epochs_trained = train(
         polygon_model=polygon_model, in_polygon=in_polygon, epochs=epochs, early_stopping=early_stopping
     )
 
-    logging.info(f"The computation took {time.time() - start_time:.1f} seconds")
+    logging.info(f"The computation took {time.time() - start_time:.1f} seconds, {epochs_trained} epochs")
     return verified
 
 
@@ -152,8 +152,8 @@ def train(
         in_polygon: Polygon,
         epochs: int | None = None,
         early_stopping: bool = False,
-) -> bool:
-    optimizer = torch.optim.Adam(polygon_model.parameters(), lr=1.0)
+) -> Tuple[bool, int]:
+    optimizer = torch.optim.SGD(polygon_model.parameters(), lr=1.0)
 
     epoch = 1
     previous_loss: Optional[torch.Tensor] = None
@@ -165,13 +165,12 @@ def train(
 
         verified: bool = torch.all(lower_bounds > 0).item()  # type: ignore
         if verified:
-            return True
+            return True, epoch
 
         loss = lower_bounds.clamp(max=0).abs().sum()
         if early_stopping:
             if previous_loss is not None and loss >= previous_loss:
-                logging.info(f"Early stopping after {epoch} epochs")
-                return False
+                return False, epoch
             previous_loss = loss
 
         optimizer.zero_grad()
@@ -185,7 +184,7 @@ def train(
 
         epoch += 1
 
-    return False
+    return False, epoch
 
 
 def get_gt(net, spec):

@@ -158,8 +158,6 @@ def train(
 
     epoch = 1
     previous_loss: Optional[torch.Tensor] = None
-    # TODO Maybe check the delta in loss to stop early?
-    # TODO ...but only for testing, bc in submission we can safely time out
     while max_epochs is None or epoch <= max_epochs:
         out_polygon: Polygon = polygon_model(in_polygon)
         lower_bounds, _ = out_polygon.evaluate()

@@ -163,6 +163,7 @@ class LinearTransformer(torch.nn.Module):
 
 class LeakyReLUTransformer(torch.nn.Module):
     negative_slope: float
+    alpha: Tensor  # (batch, out)
 
     def __init__(self, negative_slope: float, init_polygon: Polygon):
         super().__init__()
@@ -170,10 +171,10 @@ class LeakyReLUTransformer(torch.nn.Module):
 
         # Heuristic initialization
         l_bound, u_bound = init_polygon.evaluate()
-        _, n = init_polygon.l_coefs.shape[:2]
-        l_coefs = torch.eye(n=n).unsqueeze(0)  # Init as y ≥ x
-        l_coefs[(u_bound <= -l_bound)] *= self.negative_slope
-        self.alpha = torch.nn.Parameter(l_coefs)
+        batch, n = init_polygon.l_coefs.shape[:2]
+        alpha = torch.zeros((batch, n)) # relaxation I (alpha = 0)
+        alpha[u_bound > -l_bound] = 1. # relaxation II (alpha = 1)
+        self.alpha = torch.nn.Parameter(alpha)
 
     def forward(self, x: Polygon) -> Polygon:
         """
@@ -184,7 +185,7 @@ class LeakyReLUTransformer(torch.nn.Module):
         batch, n = x.l_coefs.shape[:2]
 
         # Initialize coefficients and biases
-        l_coefs = self.alpha * torch.eye(n=n).unsqueeze(0)
+        l_coefs = torch.eye(n=n).unsqueeze(0)
         u_coefs = torch.eye(n=n).unsqueeze(0)
         l_bias = torch.zeros((batch, n))
         u_bias = torch.zeros((batch, n))
@@ -215,9 +216,11 @@ class LeakyReLUTransformer(torch.nn.Module):
         )
         # For alpha bound, pick the ReLU relaxation based on the minimal area heuristic
         # (the criterion is the same for LeakyReLU as for ReLU and does not depend on negative_slope)
-        # # Relaxation I: bound by y = negative_slope
-        # alpha_bound_coefs[is_crossing & (u_bound <= -l_bound)] *= self.negative_slope
+        # Relaxation I: bound by y = negative_slope
         # Relaxation II: bound by y = x (values same as initialized)
+        # Relaxation with Alpha: interpolate the bound between negative_slope and x
+        alpha_bound_coefs[is_crossing] = self.alpha[is_crossing] * (
+                    alpha_bound_coefs[is_crossing] - self.negative_slope) + self.negative_slope
 
         polygon = Polygon(
             l_coefs=l_coefs,

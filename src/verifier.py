@@ -1,4 +1,5 @@
 import argparse
+import logging
 import time
 
 import numpy as np
@@ -16,6 +17,8 @@ from utils.loading import parse_spec
 DEVICE = "cpu"
 
 torch.set_printoptions(threshold=10_000)
+
+
 # logging.basicConfig(level=logging.DEBUG)
 
 
@@ -72,11 +75,7 @@ def conv_linear(conv, wh):
 
 
 def analyze(
-    net: torch.nn.Sequential,
-    inputs: torch.Tensor,
-    eps: float,
-    true_label: int,
-    gt: bool,
+        net: torch.nn.Sequential, inputs: torch.Tensor, eps: float, true_label: int
 ) -> bool:
     start_time = time.time()
 
@@ -112,52 +111,41 @@ def analyze(
     location = 0
     in_polygon: Polygon = Polygon.create_from_input(inputs, eps=eps)
     x = in_polygon
+
+    def add_layer(new_layer):
+        nonlocal transformer_layers, x
+        transformer_layers.append(new_layer)
+        x = new_layer(x)
+
     for layer in net_layers:
         if isinstance(layer, torch.nn.Flatten) and not flattend:
-            transformer = FlattenTransformer()
-            transformer_layers.append(transformer)
-            x = transformer(x)
+            add_layer(FlattenTransformer())
         elif isinstance(layer, torch.nn.Linear):
             weight, bias = layer.weight.data, layer.bias.data
-            transformer = LinearTransformer(weight, bias)
+            add_layer(LinearTransformer(weight, bias))
         elif isinstance(layer, torch.nn.ReLU):
-            transformer = LeakyReLUTransformer(negative_slope=0.0, init_polygon=x)
+            add_layer(LeakyReLUTransformer(negative_slope=0.0, init_polygon=x))
         elif isinstance(layer, torch.nn.LeakyReLU):
-            transformer = LeakyReLUTransformer(
+            add_layer(LeakyReLUTransformer(
                 negative_slope=layer.negative_slope, init_polygon=x
-            )
+            ))
         elif isinstance(layer, torch.nn.Conv2d):
             fc = conv_linear(layer, input_size[location])
             location += 1
             if not flattend:
-                transformer_layers.append(FlattenTransformer())
-            transformer_layers.append(LinearTransformer(fc.weight, fc.bias))
+                add_layer(FlattenTransformer())
+            add_layer(LinearTransformer(fc.weight, fc.bias))
         else:
             raise Exception(f"Unknown layer type {layer.__class__.__name__}")
-        x = transformer(x)
-        transformer_layers.append(transformer)
     polygon_model = nn.Sequential(*transformer_layers)
 
     trainable = len(list(polygon_model.parameters())) > 0
+    epochs = 10 if trainable else 1
+    verified = train(
+        polygon_model=polygon_model, in_polygon=in_polygon, epochs=epochs
+    )
 
-    if gt is not None and gt == False:
-        epochs = 10
-        print(
-            f"WARNING: Since GT is False I set epochs to {epochs} to save time. REMOVE AFTER TESTING."
-        )
-    else:
-        epochs = 1000
-    if trainable:
-        verified = train(
-            polygon_model=polygon_model, in_polygon=in_polygon, epochs=epochs
-        )
-    else:
-        out_polygon: Polygon = polygon_model(in_polygon)
-        lower_bounds, _ = out_polygon.evaluate()
-        verified: bool = torch.all(lower_bounds > 0).item()  # type: ignore
-
-    print(f"The computation took {time.time() - start_time:.1f} seconds")
-
+    logging.info(f"The computation took {time.time() - start_time:.1f} seconds")
     return verified
 
 
@@ -169,17 +157,17 @@ def train(
     optimizer = torch.optim.Adam(polygon_model.parameters())
 
     epoch = 1
-    verified = False
     # TODO Maybe check the delta in loss to stop early?
     # TODO ...but only for testing, bc in submission we can safely time out
-    while not verified and (epochs is None or epoch <= epochs):
+    while epochs is None or epoch <= epochs:
         out_polygon: Polygon = polygon_model(in_polygon)
         lower_bounds, _ = out_polygon.evaluate()
-        loss = lower_bounds.clamp(max=0).abs().sum()
-        # print(f"Epoch: {epoch:4d}, loss: {loss.item():.3f}")
 
         verified: bool = torch.all(lower_bounds > 0).item()  # type: ignore
+        if verified:
+            return True
 
+        loss = lower_bounds.clamp(max=0).abs().sum()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -191,7 +179,7 @@ def train(
 
         epoch += 1
 
-    return verified
+    return False
 
 
 def get_gt(net, spec):
@@ -248,16 +236,16 @@ def main():
     pred_label = out.max(dim=1)[1].item()
     assert pred_label == true_label
 
-    gt = get_gt(args.net, args.spec)
-    verified = analyze(net, image, eps, true_label, gt == "verified")
+    verified = analyze(net, image, eps, true_label)
     verified_text = "verified" if verified else "not verified"
     print(verified_text)
 
     if args.check:
+        gt = get_gt(args.net, args.spec)
         if verified_text == gt:
             print("^ correct\n")
         else:
-            print(f"incorrect, expected {gt}\n")
+            print(f"! incorrect, expected {gt}\n")
 
 
 if __name__ == "__main__":

@@ -150,11 +150,11 @@ def analyze(
 
 
 def train(
-    polygon_model: torch.nn.Sequential,
-    in_polygon: Polygon,
-    epochs: int | None = None,
-):
-    optimizer = torch.optim.Adam(polygon_model.parameters())
+        polygon_model: torch.nn.Sequential,
+        in_polygon: Polygon,
+        epochs: int | None = None,
+) -> bool:
+    optimizer = torch.optim.Adam(polygon_model.parameters(), lr=1.0)
 
     epoch = 1
     # TODO Maybe check the delta in loss to stop early?

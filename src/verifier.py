@@ -79,7 +79,7 @@ def analyze(
 
     # add the 'batch' dimension
     inputs = inputs.unsqueeze(0)
-    flattend = False
+    flattened = False
     num_conv = 0
 
     input_size = [(inputs.shape[-2], inputs.shape[-1])]
@@ -116,11 +116,10 @@ def analyze(
         x = new_layer(x)
 
     for layer in net_layers:
-        if isinstance(layer, torch.nn.Flatten) and not flattend:
+        if isinstance(layer, torch.nn.Flatten) and not flattened:
             add_layer(FlattenTransformer())
         elif isinstance(layer, torch.nn.Linear):
-            weight, bias = layer.weight.data, layer.bias.data
-            add_layer(LinearTransformer(weight, bias))
+            add_layer(LinearTransformer(layer.weight.data, layer.bias.data))
         elif isinstance(layer, torch.nn.ReLU):
             add_layer(LeakyReLUTransformer(negative_slope=0.0, init_polygon=x))
         elif isinstance(layer, torch.nn.LeakyReLU):
@@ -130,8 +129,9 @@ def analyze(
         elif isinstance(layer, torch.nn.Conv2d):
             fc = conv_linear(layer, input_size[location])
             location += 1
-            if not flattend:
+            if not flattened:
                 add_layer(FlattenTransformer())
+                flattened = True
             add_layer(LinearTransformer(fc.weight, fc.bias))
         else:
             raise Exception(f"Unknown layer type {layer.__class__.__name__}")

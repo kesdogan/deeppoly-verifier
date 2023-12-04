@@ -1,6 +1,7 @@
 import argparse
 import logging
 import time
+from typing import Optional
 
 import numpy as np
 import torch
@@ -17,10 +18,6 @@ from utils.loading import parse_spec
 DEVICE = "cpu"
 
 torch.set_printoptions(threshold=10_000)
-
-
-# logging.basicConfig(level=logging.DEBUG)
-
 
 def output_size(conv, wh):
     w, h = wh
@@ -75,7 +72,8 @@ def conv_linear(conv, wh):
 
 
 def analyze(
-        net: torch.nn.Sequential, inputs: torch.Tensor, eps: float, true_label: int
+        net: torch.nn.Sequential, inputs: torch.Tensor, eps: float, true_label: int,
+        early_stopping: bool = False,
 ) -> bool:
     start_time = time.time()
 
@@ -140,9 +138,9 @@ def analyze(
     polygon_model = nn.Sequential(*transformer_layers)
 
     trainable = len(list(polygon_model.parameters())) > 0
-    epochs = 10 if trainable else 1
+    epochs = 100 if trainable else 1
     verified = train(
-        polygon_model=polygon_model, in_polygon=in_polygon, epochs=epochs
+        polygon_model=polygon_model, in_polygon=in_polygon, epochs=epochs, early_stopping=early_stopping
     )
 
     logging.info(f"The computation took {time.time() - start_time:.1f} seconds")
@@ -153,10 +151,12 @@ def train(
         polygon_model: torch.nn.Sequential,
         in_polygon: Polygon,
         epochs: int | None = None,
+        early_stopping: bool = False,
 ) -> bool:
     optimizer = torch.optim.Adam(polygon_model.parameters(), lr=1.0)
 
     epoch = 1
+    previous_loss: Optional[torch.Tensor] = None
     # TODO Maybe check the delta in loss to stop early?
     # TODO ...but only for testing, bc in submission we can safely time out
     while epochs is None or epoch <= epochs:
@@ -168,6 +168,12 @@ def train(
             return True
 
         loss = lower_bounds.clamp(max=0).abs().sum()
+        if early_stopping:
+            if previous_loss is not None and loss >= previous_loss:
+                logging.info(f"Early stopping after {epoch} epochs")
+                return False
+            previous_loss = loss
+
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -222,7 +228,18 @@ def main():
         help="Whether to check the GT answer.",
         action=argparse.BooleanOptionalAction,
     )
+    parser.add_argument(
+        "--early-stopping",
+        help="Whether to early-stop training when loss increases.",
+        action=argparse.BooleanOptionalAction,
+    )
+    parser.add_argument(
+        "--log",
+        type=str,
+    )
     args = parser.parse_args()
+    if args.log:
+        logging.basicConfig(level=args.log.upper())
 
     true_label, dataset, image, eps = parse_spec(args.spec)
 
@@ -236,7 +253,7 @@ def main():
     pred_label = out.max(dim=1)[1].item()
     assert pred_label == true_label
 
-    verified = analyze(net, image, eps, true_label)
+    verified = analyze(net, image, eps, true_label, early_stopping=args.early_stopping)
     verified_text = "verified" if verified else "not verified"
     print(verified_text)
 

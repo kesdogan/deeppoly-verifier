@@ -191,12 +191,12 @@ class LeakyReLUTransformer(torch.nn.Module):
         u_bias = torch.zeros((batch, n))
 
         # Always negative
-        is_always_negative: torch.Tensor = u_bound <= 0
+        is_always_negative: torch.Tensor = u_bound <= 0  # type: ignore
         l_coefs[is_always_negative] *= self.negative_slope
         u_coefs[is_always_negative] *= self.negative_slope
 
         # Always positive (values same as initialized)
-        is_always_positive: torch.Tensor = l_bound >= 0
+        is_always_positive: torch.Tensor = l_bound >= 0  # type: ignore
 
         # Crossing
         is_crossing = ~(is_always_negative | is_always_positive)

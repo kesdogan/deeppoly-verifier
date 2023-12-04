@@ -2,6 +2,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -161,6 +162,94 @@ class LinearTransformer(torch.nn.Module):
         return polygon
 
 
+class Conv2dTransformer(torch.nn.Module):
+    layer: LinearTransformer
+
+    stride: tuple[int, int]
+    padding: tuple[int, int]
+    kernel_size: tuple[int, int]
+
+    input_shape: tuple[int, int, int]
+    output_shape: tuple[int, int, int]
+
+    def __init__(
+        self,
+        stride,
+        padding,
+        kernel_size,
+        in_channels,
+        out_channels,
+        input_size: tuple[int, int],
+        weight: Tensor,
+        bias: Tensor,
+    ):
+        super().__init__()
+        self.stride = stride
+        self.padding = padding
+        self.kernel_size = kernel_size
+
+        self.input_shape = (in_channels, *input_size)
+        self.output_shape = (out_channels, *self.output_size())
+
+        fc = self._conv_linear(weight, bias)
+        self.layer = LinearTransformer(fc.weight.data, fc.bias.data)
+
+    def output_size(
+        self,
+    ):
+        _, w, h = self.input_shape
+        return (
+            (w + 2 * self.padding[0] - self.kernel_size[0]) // self.stride[0] + 1,
+            (h + 2 * self.padding[1] - self.kernel_size[1]) // self.stride[1] + 1,
+        )
+
+    def _conv_linear(self, weight, bias):
+        def encode_loc(tup, shape):
+            residual = 0
+            coefficient = 1
+            for i in list(range(len(shape)))[::-1]:
+                residual = residual + coefficient * tup[i]
+                coefficient = coefficient * shape[i]
+            return residual
+
+        with torch.no_grad():
+            _, w, h = self.input_shape
+
+            fc = torch.nn.Linear(
+                in_features=np.prod(self.input_shape),
+                out_features=np.prod(self.output_shape),
+            )
+            fc.weight.data.fill_(0.0)
+
+            # Output coordinates
+            for x_0 in range(self.output_shape[1]):
+                for y_0 in range(self.output_shape[2]):
+                    x_00 = self.stride[0] * x_0 - self.padding[0]
+                    y_00 = self.stride[1] * y_0 - self.padding[1]
+                    for xd in range(self.kernel_size[0]):
+                        for yd in range(self.kernel_size[1]):
+                            for c1 in range(self.output_shape[0]):
+                                fc.bias[
+                                    encode_loc((c1, x_0, y_0), self.output_shape)
+                                ] = bias[c1]
+                                for c2 in range(self.input_shape[0]):
+                                    if 0 <= x_00 + xd < w and 0 <= y_00 + yd < h:
+                                        cw = weight[c1, c2, xd, yd]
+                                        fc.weight[
+                                            encode_loc(
+                                                (c1, x_0, y_0), self.output_shape
+                                            ),
+                                            encode_loc(
+                                                (c2, x_00 + xd, y_00 + yd),
+                                                self.input_shape,
+                                            ),
+                                        ] = cw
+            return fc
+
+    def forward(self, x: Polygon) -> Polygon:
+        return self.layer(x)
+
+
 class LeakyReLUTransformer(torch.nn.Module):
     negative_slope: float
     alpha: Tensor  # (batch, out)
@@ -172,8 +261,8 @@ class LeakyReLUTransformer(torch.nn.Module):
         # Heuristic initialization
         l_bound, u_bound = init_polygon.evaluate()
         batch, n = init_polygon.l_coefs.shape[:2]
-        alpha = torch.zeros((batch, n)) # relaxation I (alpha = 0)
-        alpha[u_bound > -l_bound] = 1. # relaxation II (alpha = 1)
+        alpha = torch.zeros((batch, n))  # relaxation I (alpha = 0)
+        alpha[u_bound > -l_bound] = 1.0  # relaxation II (alpha = 1)
         self.alpha = torch.nn.Parameter(alpha)
 
     def forward(self, x: Polygon) -> Polygon:
@@ -201,7 +290,7 @@ class LeakyReLUTransformer(torch.nn.Module):
         # Crossing
         is_crossing = ~(is_always_negative | is_always_positive)
         # If negative_slope <= 1, the slope sets upper bound, otherwise sets lower bound
-        slope_bound_coefs, slope_bound_bias, alpha_bound_coefs, alpha_bound_bias = (
+        slope_bound_coefs, slope_bound_bias, alpha_bound_coefs, _alpha_bound_bias = (
             (u_coefs, u_bias, l_coefs, l_bias)
             if self.negative_slope <= 1
             else (l_coefs, l_bias, u_coefs, u_bias)
@@ -219,9 +308,14 @@ class LeakyReLUTransformer(torch.nn.Module):
         # Relaxation I: bound by y = negative_slope
         # Relaxation II: bound by y = x (values same as initialized)
         # Relaxation with Alpha: interpolate the bound between negative_slope and x
-        negative_slope_coefs = torch.eye(n=n).unsqueeze(0)[is_crossing] * self.negative_slope
-        alpha_bound_coefs[is_crossing] = self.alpha[is_crossing].unsqueeze(-1) * (
-                alpha_bound_coefs[is_crossing] - negative_slope_coefs) + negative_slope_coefs
+        negative_slope_coefs = (
+            torch.eye(n=n).unsqueeze(0)[is_crossing] * self.negative_slope
+        )
+        alpha_bound_coefs[is_crossing] = (
+            self.alpha[is_crossing].unsqueeze(-1)
+            * (alpha_bound_coefs[is_crossing] - negative_slope_coefs)
+            + negative_slope_coefs
+        )
 
         polygon = Polygon(
             l_coefs=l_coefs,

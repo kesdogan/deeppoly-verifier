@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from networks import get_network
 from transformers import (
+    Conv2dTransformer,
     FlattenTransformer,
     LeakyReLUTransformer,
     LinearTransformer,
@@ -19,76 +20,27 @@ DEVICE = "cpu"
 
 torch.set_printoptions(threshold=10_000)
 
+
 def output_size(conv, wh):
     w, h = wh
     output = [
-        (wh[0] + 2 * conv.padding[0] - conv.kernel_size[0]) // conv.stride[0] + 1,
-        (wh[1] + 2 * conv.padding[1] - conv.kernel_size[1]) // conv.stride[1] + 1,
+        (w + 2 * conv.padding[0] - conv.kernel_size[0]) // conv.stride[0] + 1,
+        (h + 2 * conv.padding[1] - conv.kernel_size[1]) // conv.stride[1] + 1,
     ]
     return output
 
 
-def encode_loc(tup, shape):
-    residual = 0
-    coefficient = 1
-    for i in list(range(len(shape)))[::-1]:
-        residual = residual + coefficient * tup[i]
-        coefficient = coefficient * shape[i]
-    return residual
-
-
-def conv_linear(conv, wh):
-    with torch.no_grad():
-        w, h = wh
-        output = output_size(conv, wh)
-
-        in_shape = (conv.in_channels, w, h)
-        out_shape = (conv.out_channels, output[0], output[1])
-
-        fc = nn.Linear(in_features=np.prod(in_shape), out_features=np.prod(out_shape))
-        fc.weight.data.fill_(0.0)
-
-        # Output coordinates
-        for x_0 in range(output[0]):
-            for y_0 in range(output[1]):
-                x_00 = conv.stride[0] * x_0 - conv.padding[0]
-                y_00 = conv.stride[1] * y_0 - conv.padding[1]
-                for xd in range(conv.kernel_size[0]):
-                    for yd in range(conv.kernel_size[1]):
-                        for c1 in range(conv.out_channels):
-                            fc.bias[encode_loc((c1, x_0, y_0), out_shape)] = conv.bias[
-                                c1
-                            ]
-                            for c2 in range(conv.in_channels):
-                                if 0 <= x_00 + xd < w and 0 <= y_00 + yd < h:
-                                    cw = conv.weight[c1, c2, xd, yd]
-                                    fc.weight[
-                                        encode_loc((c1, x_0, y_0), out_shape),
-                                        encode_loc(
-                                            (c2, x_00 + xd, y_00 + yd), in_shape
-                                        ),
-                                    ] = cw
-        return fc
-
-
 def analyze(
-        net: torch.nn.Sequential, inputs: torch.Tensor, eps: float, true_label: int,
-        early_stopping: bool = False,
+    net: torch.nn.Sequential,
+    inputs: torch.Tensor,
+    eps: float,
+    true_label: int,
+    early_stopping: bool = False,
 ) -> bool:
     start_time = time.time()
 
     # add the 'batch' dimension
     inputs = inputs.unsqueeze(0)
-    flattened = False
-    num_conv = 0
-
-    input_size = [(inputs.shape[-2], inputs.shape[-1])]
-    for layer in net.children():
-        if not isinstance(layer, torch.nn.Conv2d):
-            break
-        else:
-            input_size.append(tuple(output_size(layer, input_size[num_conv])))
-            num_conv += 1
 
     n_classes = list(net.children())[-1].out_features
     final_layer = torch.nn.Linear(in_features=n_classes, out_features=n_classes - 1)
@@ -106,55 +58,71 @@ def analyze(
 
     # Construct a model like net that passes Polygon through each layer
     transformer_layers = []
-    location = 0
     in_polygon: Polygon = Polygon.create_from_input(inputs, eps=eps)
     x = in_polygon
+    x_size = (inputs.shape[-2], inputs.shape[-1])  # Could be a polygon property
 
-    def add_layer(new_layer):
+    def add_transformer(transformer):
         nonlocal transformer_layers, x
-        transformer_layers.append(new_layer)
-        x = new_layer(x)
+        transformer_layers.append(transformer)
+        x = transformer(x)
 
-    for layer in net_layers:
-        if isinstance(layer, torch.nn.Flatten) and not flattened:
-            add_layer(FlattenTransformer())
+    for depth, layer in enumerate(net_layers):
+        if isinstance(layer, torch.nn.Flatten):
+            add_transformer(FlattenTransformer())
         elif isinstance(layer, torch.nn.Linear):
-            add_layer(LinearTransformer(layer.weight.data, layer.bias.data))
+            add_transformer(LinearTransformer(layer.weight.data, layer.bias.data))
         elif isinstance(layer, torch.nn.ReLU):
-            add_layer(LeakyReLUTransformer(negative_slope=0.0, init_polygon=x))
+            add_transformer(LeakyReLUTransformer(negative_slope=0.0, init_polygon=x))
         elif isinstance(layer, torch.nn.LeakyReLU):
-            add_layer(LeakyReLUTransformer(
-                negative_slope=layer.negative_slope, init_polygon=x
-            ))
+            add_transformer(
+                LeakyReLUTransformer(
+                    negative_slope=layer.negative_slope, init_polygon=x
+                )
+            )
         elif isinstance(layer, torch.nn.Conv2d):
-            fc = conv_linear(layer, input_size[location])
-            location += 1
-            if not flattened:
-                add_layer(FlattenTransformer())
-                flattened = True
-            add_layer(LinearTransformer(fc.weight, fc.bias))
+            # Before the first linear layer, we need to flatten the input
+            if depth == 0:
+                add_transformer(FlattenTransformer())
+            transformer = Conv2dTransformer(
+                stride=layer.stride,
+                padding=layer.padding,
+                kernel_size=layer.kernel_size,
+                in_channels=layer.in_channels,
+                out_channels=layer.out_channels,
+                input_size=x_size,
+                weight=layer.weight.data,
+                bias=layer.bias.data,  # type: ignore
+            )
+            add_transformer(transformer)
+            x_size = transformer.output_size()
         else:
             raise Exception(f"Unknown layer type {layer.__class__.__name__}")
     polygon_model = nn.Sequential(*transformer_layers)
 
     verified, epochs_trained = train(
-        polygon_model=polygon_model, in_polygon=in_polygon, max_epochs=100, early_stopping=early_stopping
+        polygon_model=polygon_model,
+        in_polygon=in_polygon,
+        max_epochs=100,
+        early_stopping=early_stopping,
     )
 
-    logging.info(f"The computation took {time.time() - start_time:.1f} seconds, {epochs_trained} epochs")
+    logging.info(
+        f"The computation took {time.time() - start_time:.1f} seconds, {epochs_trained} epochs"
+    )
     return verified
 
 
 def train(
-        polygon_model: torch.nn.Sequential,
-        in_polygon: Polygon,
-        max_epochs: int | None = None,
-        early_stopping: bool = False,
+    polygon_model: torch.nn.Sequential,
+    in_polygon: Polygon,
+    max_epochs: int | None = None,
+    early_stopping: bool = False,
 ) -> Tuple[bool, int]:
     trainable = len(list(polygon_model.parameters())) > 0
     optimizer = None
     if trainable:
-        optimizer = torch.optim.SGD(polygon_model.parameters(), lr=1.0)
+        optimizer = torch.optim.SGD(polygon_model.parameters(), lr=2.0)
 
     epoch = 1
     previous_loss: Optional[torch.Tensor] = None
@@ -242,8 +210,6 @@ def main():
         logging.basicConfig(level=args.log.upper())
 
     true_label, dataset, image, eps = parse_spec(args.spec)
-
-    # print(args.spec)
 
     net = get_network(args.net, dataset, f"models/{dataset}_{args.net}.pt").to(DEVICE)
 

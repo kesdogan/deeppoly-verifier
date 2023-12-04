@@ -142,7 +142,7 @@ def train(
                 return False, epoch
             previous_loss = loss
 
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         loss.backward()
         optimizer.step()
 
@@ -157,7 +157,7 @@ def train(
 
 
 def get_gt(net, spec):
-    with open("test_cases/gt.txt", "r") as f:
+    with open("preliminary_evaluation_test_cases/gt.txt", "r") as f:
         for line in f.read().splitlines():
             model, fl, answer = line.split(",")
             if model == net and fl in spec:

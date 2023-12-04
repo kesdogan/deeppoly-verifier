@@ -1,6 +1,6 @@
 #!/bin/bash
 
-for path in test_cases/"$1"/*.txt; do
+for path in preliminary_evaluation_test_cases/"$1"/*.txt; do
   echo "$path"
   python src/verifier.py --net "$1" --spec "$path" --check --early-stopping --log INFO
 done

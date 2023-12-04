@@ -137,10 +137,8 @@ def analyze(
             raise Exception(f"Unknown layer type {layer.__class__.__name__}")
     polygon_model = nn.Sequential(*transformer_layers)
 
-    trainable = len(list(polygon_model.parameters())) > 0
-    epochs = 100 if trainable else 1
     verified, epochs_trained = train(
-        polygon_model=polygon_model, in_polygon=in_polygon, epochs=epochs, early_stopping=early_stopping
+        polygon_model=polygon_model, in_polygon=in_polygon, max_epochs=100, early_stopping=early_stopping
     )
 
     logging.info(f"The computation took {time.time() - start_time:.1f} seconds, {epochs_trained} epochs")
@@ -150,22 +148,27 @@ def analyze(
 def train(
         polygon_model: torch.nn.Sequential,
         in_polygon: Polygon,
-        epochs: int | None = None,
+        max_epochs: int | None = None,
         early_stopping: bool = False,
 ) -> Tuple[bool, int]:
-    optimizer = torch.optim.SGD(polygon_model.parameters(), lr=1.0)
+    trainable = len(list(polygon_model.parameters())) > 0
+    optimizer = None
+    if trainable:
+        optimizer = torch.optim.SGD(polygon_model.parameters(), lr=1.0)
 
     epoch = 1
     previous_loss: Optional[torch.Tensor] = None
     # TODO Maybe check the delta in loss to stop early?
     # TODO ...but only for testing, bc in submission we can safely time out
-    while epochs is None or epoch <= epochs:
+    while max_epochs is None or epoch <= max_epochs:
         out_polygon: Polygon = polygon_model(in_polygon)
         lower_bounds, _ = out_polygon.evaluate()
 
         verified: bool = torch.all(lower_bounds > 0).item()  # type: ignore
         if verified:
             return True, epoch
+        if not optimizer:
+            return False, epoch
 
         loss = lower_bounds.clamp(max=0).abs().sum()
         if early_stopping:

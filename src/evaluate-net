@@ -2,5 +2,5 @@
 
 for path in *test_cases/"$1"/*.txt; do
   echo "$path"
-  python src/verifier.py --net "$1" --spec "$path" --check --early-stopping --log INFO
+  python src/verifier.py --net "$1" --spec "$path" --check --early-stopping=2 --lr-scheduling=1 --log INFO
 done

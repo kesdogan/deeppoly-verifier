@@ -128,12 +128,12 @@ def train(
     trainable = len(list(polygon_model.parameters())) > 0
     optimizer = None
     if trainable:
-        optimizer = torch.optim.SGD(polygon_model.parameters(), lr=10.0)
+        optimizer = torch.optim.SGD(polygon_model.parameters(), lr=5.0)
 
     epoch = 1
     previous_loss: Optional[torch.Tensor] = None
     history_size = max(early_stopping or 0, lr_scheduling or 0)
-    loss_rising = collections.deque(maxlen=int(1.5 * history_size))
+    loss_rising = collections.deque(maxlen=int(2 * history_size))
 
     while max_epochs is None or epoch <= max_epochs:
         out_polygon: Polygon = polygon_model(in_polygon)
@@ -154,8 +154,12 @@ def train(
         lr = optimizer.param_groups[0]["lr"]
         logging.info(f"Epoch {epoch:4d}: lr = {lr:.2f}, loss = {loss.item():.2f}")
 
-        if lr_scheduling is not None and number_of_rising >= lr_scheduling:
-            optimizer.param_groups[0]["lr"] = lr / 2
+        if (
+            lr_scheduling is not None
+            and number_of_rising >= lr_scheduling
+            and loss_rising[-1]
+        ):
+            optimizer.param_groups[0]["lr"] = max(lr / 2, 1e-4)
         if early_stopping is not None and number_of_rising >= early_stopping:
             return False, epoch
         previous_loss = loss

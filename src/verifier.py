@@ -1,4 +1,5 @@
 import argparse
+import collections
 import logging
 import time
 from typing import Optional, Tuple
@@ -124,10 +125,14 @@ def train(
     trainable = len(list(polygon_model.parameters())) > 0
     optimizer = None
     if trainable:
-        optimizer = torch.optim.SGD(polygon_model.parameters(), lr=2.0)
+        optimizer = torch.optim.SGD(polygon_model.parameters(), lr=10.0)
 
     epoch = 1
     previous_loss: Optional[torch.Tensor] = None
+    loss_rising = collections.deque(maxlen=4)  # the history we look at
+
+    lr_schedule = True
+
     while max_epochs is None or epoch <= max_epochs:
         out_polygon: Polygon = polygon_model(in_polygon)
         lower_bounds, _ = out_polygon.evaluate()
@@ -139,10 +144,21 @@ def train(
             return False, epoch
 
         loss = lower_bounds.clamp(max=0).abs().sum()
+        loss_rising.append(
+            previous_loss is not None and loss.item() >= previous_loss.item()
+        )
+        print(loss_rising)
+
+        number_of_rising = sum(1 for is_rising in loss_rising if is_rising)
+        lr = optimizer.param_groups[0]["lr"]
+        logging.info(f"Epoch {epoch:4d}: loss = {loss.item():.2f}, lr = {lr:.2f}")
+
+        if lr_schedule and number_of_rising >= 2:
+            optimizer.param_groups[0]["lr"] = lr / 2
         if early_stopping:
-            if previous_loss is not None and loss >= previous_loss:
+            if number_of_rising >= 2:
                 return False, epoch
-            previous_loss = loss
+        previous_loss = loss
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()

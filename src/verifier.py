@@ -36,7 +36,8 @@ def analyze(
     inputs: torch.Tensor,
     eps: float,
     true_label: int,
-    early_stopping: bool = False,
+    early_stopping: Optional[int] = None,
+    lr_scheduling: Optional[int] = None,
 ) -> bool:
     start_time = time.time()
 
@@ -108,6 +109,7 @@ def analyze(
         in_polygon=in_polygon,
         max_epochs=100,
         early_stopping=early_stopping,
+        lr_scheduling=lr_scheduling,
     )
 
     logging.info(
@@ -120,7 +122,8 @@ def train(
     polygon_model: torch.nn.Sequential,
     in_polygon: Polygon,
     max_epochs: int | None = None,
-    early_stopping: bool = False,
+    early_stopping: Optional[int] = None,
+    lr_scheduling: Optional[int] = None,
 ) -> Tuple[bool, int]:
     trainable = len(list(polygon_model.parameters())) > 0
     optimizer = None
@@ -129,9 +132,8 @@ def train(
 
     epoch = 1
     previous_loss: Optional[torch.Tensor] = None
-    loss_rising = collections.deque(maxlen=4)  # the history we look at
-
-    lr_schedule = True
+    history_size = max(early_stopping or 0, lr_scheduling or 0)
+    loss_rising = collections.deque(maxlen=int(1.5 * history_size))
 
     while max_epochs is None or epoch <= max_epochs:
         out_polygon: Polygon = polygon_model(in_polygon)
@@ -147,17 +149,15 @@ def train(
         loss_rising.append(
             previous_loss is not None and loss.item() >= previous_loss.item()
         )
-        print(loss_rising)
 
         number_of_rising = sum(1 for is_rising in loss_rising if is_rising)
         lr = optimizer.param_groups[0]["lr"]
-        logging.info(f"Epoch {epoch:4d}: loss = {loss.item():.2f}, lr = {lr:.2f}")
+        logging.info(f"Epoch {epoch:4d}: lr = {lr:.2f}, loss = {loss.item():.2f}")
 
-        if lr_schedule and number_of_rising >= 2:
+        if lr_scheduling is not None and number_of_rising >= lr_scheduling:
             optimizer.param_groups[0]["lr"] = lr / 2
-        if early_stopping:
-            if number_of_rising >= 2:
-                return False, epoch
+        if early_stopping is not None and number_of_rising >= early_stopping:
+            return False, epoch
         previous_loss = loss
 
         optimizer.zero_grad(set_to_none=True)
@@ -217,8 +217,13 @@ def main():
     )
     parser.add_argument(
         "--early-stopping",
-        help="Whether to early-stop training when loss increases.",
-        action=argparse.BooleanOptionalAction,
+        help="A number specifying how many times the loss needs to increase to early-stop training.",
+        type=int,
+    )
+    parser.add_argument(
+        "--lr-scheduling",
+        help="A number specifying how many times the loss needs to increase to halve the learning rate.",
+        type=int,
     )
     parser.add_argument(
         "--log",
@@ -238,7 +243,14 @@ def main():
     pred_label = out.max(dim=1)[1].item()
     assert pred_label == true_label
 
-    verified = analyze(net, image, eps, true_label, early_stopping=args.early_stopping)
+    verified = analyze(
+        net,
+        image,
+        eps,
+        true_label,
+        early_stopping=args.early_stopping,
+        lr_scheduling=args.lr_scheduling,
+    )
     verified_text = "verified" if verified else "not verified"
     print(verified_text)
 

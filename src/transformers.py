@@ -118,7 +118,7 @@ class Polygon:
             # l_bound, u_bound := l_bias, u_bias
             parent=None,
         )
-        logging.debug(f"Created\n{polygon}")
+        logging.debug("Created\n%s", polygon)
 
         return polygon
 
@@ -158,7 +158,7 @@ class LinearTransformer(torch.nn.Module):
             u_bias=self.bias.unsqueeze(0),
             parent=x,
         )
-        logging.debug(f"Linear layer output:\n{polygon}")
+        logging.debug("Linear layer output:\n%s", polygon)
         return polygon
 
 
@@ -216,10 +216,10 @@ class Conv2dTransformer(torch.nn.Module):
             _, w, h = self.input_shape
 
             fc = torch.nn.Linear(
-                in_features=np.prod(self.input_shape),
-                out_features=np.prod(self.output_shape),
+                in_features=np.prod(self.input_shape), # n^2 * c
+                out_features=np.prod(self.output_shape), # n^2 * c
             )
-            fc.weight.data.fill_(0.0)
+            fc.weight.data.fill_(0.0) # n^4 * c^2
 
             # Output coordinates
             for x_0 in range(self.output_shape[1]):
@@ -324,8 +324,8 @@ class LeakyReLUTransformer(torch.nn.Module):
             u_bias=u_bias,
             parent=x,
         )
-        logging.debug(f"ReLU alpha: {self.alpha}")
-        logging.debug(f"ReLU output:\n{polygon}")
+        logging.debug("ReLU alpha: %s", self.alpha)
+        logging.debug("ReLU output:\n%s", polygon)
         return polygon
 
     def clamp(self):

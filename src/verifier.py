@@ -157,7 +157,8 @@ def train(
 
 
 def get_gt(net, spec):
-    with open("preliminary_evaluation_test_cases/gt.txt", "r") as f:
+    folder = spec.split("/")[0]
+    with open(f"{folder}/gt.txt", "r") as f:
         for line in f.read().splitlines():
             model, fl, answer = line.split(",")
             if model == net and fl in spec:

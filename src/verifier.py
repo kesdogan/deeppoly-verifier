@@ -100,6 +100,8 @@ def analyze(
             raise Exception(f"Unknown layer type {layer.__class__.__name__}")
     polygon_model = nn.Sequential(*transformer_layers)
 
+    logging.info(f"The model construction took {time.time() - start_time:.1f} seconds")
+
     verified, epochs_trained = train(
         polygon_model=polygon_model,
         in_polygon=in_polygon,

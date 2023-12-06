@@ -191,8 +191,8 @@ class Conv2dTransformer(torch.nn.Module):
         self.input_shape = (in_channels, *input_size)
         self.output_shape = (out_channels, *self.output_size())
 
-        fc = self._conv_linear(weight, bias)
-        self.layer = LinearTransformer(fc.weight.data, fc.bias.data)
+        transformer_weight, transformer_bias = self._conv_linear(weight, bias)
+        self.layer = LinearTransformer(transformer_weight, transformer_bias)
 
     def output_size(
         self,
@@ -214,12 +214,10 @@ class Conv2dTransformer(torch.nn.Module):
 
         with torch.no_grad():
             _, w, h = self.input_shape
-
-            fc = torch.nn.Linear(
-                in_features=np.prod(self.input_shape), # n^2 * c
-                out_features=np.prod(self.output_shape), # n^2 * c
-            )
-            fc.weight.data.fill_(0.0) # n^4 * c^2
+            in_features: int = torch.prod(torch.tensor(self.input_shape)).item()
+            out_features: int = torch.prod(torch.tensor(self.output_shape)).item()
+            transformer_weight = torch.zeros((out_features, in_features))
+            transformer_bias = torch.zeros((out_features,))
 
             # Output coordinates
             for x_0 in range(self.output_shape[1]):
@@ -229,13 +227,13 @@ class Conv2dTransformer(torch.nn.Module):
                     for xd in range(self.kernel_size[0]):
                         for yd in range(self.kernel_size[1]):
                             for c1 in range(self.output_shape[0]):
-                                fc.bias[
+                                transformer_bias[
                                     encode_loc((c1, x_0, y_0), self.output_shape)
                                 ] = bias[c1]
                                 for c2 in range(self.input_shape[0]):
                                     if 0 <= x_00 + xd < w and 0 <= y_00 + yd < h:
                                         cw = weight[c1, c2, xd, yd]
-                                        fc.weight[
+                                        transformer_weight[
                                             encode_loc(
                                                 (c1, x_0, y_0), self.output_shape
                                             ),
@@ -244,7 +242,7 @@ class Conv2dTransformer(torch.nn.Module):
                                                 self.input_shape,
                                             ),
                                         ] = cw
-            return fc
+            return transformer_weight, transformer_bias
 
     def forward(self, x: Polygon) -> Polygon:
         return self.layer(x)

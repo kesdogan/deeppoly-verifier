@@ -38,7 +38,7 @@ def analyze(
     true_label: int,
     early_stopping: Optional[int] = None,
     lr_scheduling: Optional[int] = None,
-) -> bool:
+) -> tuple[bool, float]:
     start_time = time.time()
 
     # add the 'batch' dimension
@@ -107,7 +107,7 @@ def analyze(
     verified, epochs_trained = train(
         polygon_model=polygon_model,
         in_polygon=in_polygon,
-        max_epochs=100,
+        max_epochs=25,
         early_stopping=early_stopping,
         lr_scheduling=lr_scheduling,
     )
@@ -115,7 +115,7 @@ def analyze(
     logging.info(
         f"The computation took {time.time() - start_time:.1f} seconds, {epochs_trained} epochs"
     )
-    return verified
+    return verified, time.time() - start_time
 
 
 def train(
@@ -247,7 +247,7 @@ def main():
     pred_label = out.max(dim=1)[1].item()
     assert pred_label == true_label
 
-    verified = analyze(
+    verified, duration = analyze(
         net,
         image,
         eps,
@@ -256,14 +256,18 @@ def main():
         lr_scheduling=args.lr_scheduling,
     )
     verified_text = "verified" if verified else "not verified"
-    print(verified_text)
 
     if args.check:
         gt = get_gt(args.net, args.spec)
         if verified_text == gt:
-            print("^ correct\n")
+            print(f"✅ (truth: {gt}, {duration:.1f}s): {args.spec}")
+        elif gt == "verified":
+            print(f"❌ ({gt}, {duration:.1f}s): {args.spec}")
         else:
-            print(f"! incorrect, expected {gt}\n")
+            print(f"⚠️ ({gt}, {duration:.1f}s): {args.spec}")
+    else:
+        # TODO Is this all what's required by the evaluation?
+        print(verified_text)
 
 
 if __name__ == "__main__":

@@ -1,75 +1,47 @@
 import argparse
+import collections
 import logging
+import time
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
 from networks import get_network
-from transformers import FlattenTransformer, LinearTransformer, Polygon, LeakyReLUTransformer
+from transformers import (
+    Conv2dTransformer,
+    FlattenTransformer,
+    LeakyReLUTransformer,
+    LinearTransformer,
+    Polygon,
+)
 from utils.loading import parse_spec
-import numpy as np
 
 DEVICE = "cpu"
 
 torch.set_printoptions(threshold=10_000)
-# logging.basicConfig(level=logging.DEBUG)
+
 
 def output_size(conv, wh):
     w, h = wh
-    output = [  (wh[0] + 2 * conv.padding[0] - conv.kernel_size[0]) // conv.stride[0] + 1,
-                (wh[1] + 2 * conv.padding[1] - conv.kernel_size[1]) // conv.stride[1] + 1]
+    output = [
+        (w + 2 * conv.padding[0] - conv.kernel_size[0]) // conv.stride[0] + 1,
+        (h + 2 * conv.padding[1] - conv.kernel_size[1]) // conv.stride[1] + 1,
+    ]
     return output
 
 
-def encode_loc(tup, shape):
-    residual = 0
-    coefficient = 1
-    for i in list(range(len(shape)))[::-1]:
-        residual = residual + coefficient * tup[i]
-        coefficient = coefficient * shape[i]
-    return residual
-
-
-def conv_linear(conv, wh):
-    with torch.no_grad():
-        w, h = wh
-        output = output_size(conv, wh)
-
-        in_shape = (conv.in_channels, w, h)
-        out_shape = (conv.out_channels, output[0], output[1])
-
-        fc = nn.Linear(in_features=np.prod(in_shape), out_features=np.prod(out_shape))
-        fc.weight.data.fill_(0.0)
-
-        # Output coordinates
-        for x_0 in range(output[0]):
-            for y_0 in range(output[1]):
-                x_00 = conv.stride[0] * x_0 - conv.padding[0]
-                y_00 = conv.stride[1] * y_0 - conv.padding[1]
-                for xd in range(conv.kernel_size[0]):
-                    for yd in range(conv.kernel_size[1]):
-                        for c1 in range(conv.out_channels):
-                            fc.bias[encode_loc((c1, x_0, y_0), out_shape)] = conv.bias[c1]
-                            for c2 in range(conv.in_channels):
-                                if 0 <= x_00 + xd < w and 0 <= y_00 + yd < h:
-                                    cw = conv.weight[c1, c2, xd, yd]
-                                    fc.weight[encode_loc((c1, x_0, y_0), out_shape), encode_loc((c2, x_00 + xd, y_00 + yd), in_shape)] = cw
-        return fc
-
-
 def analyze(
-    net: torch.nn.Sequential, inputs: torch.Tensor, eps: float, true_label: int
-) -> bool:
+    net: torch.nn.Sequential,
+    inputs: torch.Tensor,
+    eps: float,
+    true_label: int,
+    early_stopping: Optional[int] = None,
+    lr_scheduling: Optional[int] = None,
+) -> tuple[bool, float]:
+    start_time = time.time()
+
     # add the 'batch' dimension
     inputs = inputs.unsqueeze(0)
-    flattened = False; num_conv = 0
-
-    input_size = [(inputs.shape[-2], inputs.shape[-1])]
-    for layer in net.children():
-        if not isinstance(layer, torch.nn.Conv2d):
-            break
-        else:
-            input_size.append(tuple(output_size(layer, input_size[num_conv])))
-            num_conv += 1
 
     n_classes = list(net.children())[-1].out_features
     final_layer = torch.nn.Linear(in_features=n_classes, out_features=n_classes - 1)
@@ -86,39 +58,132 @@ def analyze(
     net_layers = list(net.children()) + [final_layer]
 
     # Construct a model like net that passes Polygon through each layer
-    transformer_layers = []; location = 0
-    for layer in net_layers:
+    transformer_layers = []
+    in_polygon: Polygon = Polygon.create_from_input(inputs, eps=eps)
+    x = in_polygon
+    x_size = (inputs.shape[-2], inputs.shape[-1])  # Could be a polygon property
+
+    def add_transformer(transformer):
+        nonlocal transformer_layers, x
+        transformer_layers.append(transformer)
+        x = transformer(x)
+
+    for depth, layer in enumerate(net_layers):
         if isinstance(layer, torch.nn.Flatten):
-            if flattened: pass
-            transformer_layers.append(FlattenTransformer())
-            flattened = True
+            add_transformer(FlattenTransformer())
         elif isinstance(layer, torch.nn.Linear):
-            transformer_layers.append(LinearTransformer(layer.weight, layer.bias))
+            add_transformer(LinearTransformer(layer.weight.data, layer.bias.data))
         elif isinstance(layer, torch.nn.ReLU):
-            transformer_layers.append(LeakyReLUTransformer(0.0))
+            add_transformer(LeakyReLUTransformer(negative_slope=0.0, init_polygon=x))
         elif isinstance(layer, torch.nn.LeakyReLU):
-            transformer_layers.append(LeakyReLUTransformer(layer.negative_slope))
+            add_transformer(
+                LeakyReLUTransformer(
+                    negative_slope=layer.negative_slope, init_polygon=x
+                )
+            )
         elif isinstance(layer, torch.nn.Conv2d):
-            fc = conv_linear(layer, input_size[location])
-            location += 1
-            if not flattened:
-                transformer_layers.append(FlattenTransformer())
-                flattened = True
-            transformer_layers.append(LinearTransformer(fc.weight, fc.bias))
+            # Before the first linear layer, we need to flatten the input
+            if depth == 0:
+                add_transformer(FlattenTransformer())
+            transformer = Conv2dTransformer(
+                stride=layer.stride,
+                padding=layer.padding,
+                kernel_size=layer.kernel_size,
+                in_channels=layer.in_channels,
+                out_channels=layer.out_channels,
+                input_size=x_size,
+                weight=layer.weight.data,
+                bias=layer.bias.data,  # type: ignore
+            )
+            add_transformer(transformer)
+            x_size = transformer.output_size()
         else:
             raise Exception(f"Unknown layer type {layer.__class__.__name__}")
     polygon_model = nn.Sequential(*transformer_layers)
 
-    in_polygon = Polygon.create_from_input(inputs, eps=eps)
-    out_polygon = polygon_model(in_polygon)
-    lower_bounds, upper_bounds = out_polygon.evaluate()
+    logging.info(f"The model construction took {time.time() - start_time:.1f} seconds")
 
-    # noinspection PyTypeChecker
-    verified = torch.all(lower_bounds > 0).item()
-    logging.debug(f"The true label: {true_label}")
-    logging.debug(f"The lower bounds: {lower_bounds}")
-    logging.debug(f"The upper bounds: {upper_bounds}")
-    return verified
+    verified, epochs_trained = train(
+        polygon_model=polygon_model,
+        in_polygon=in_polygon,
+        max_epochs=None,
+        early_stopping=early_stopping,
+        lr_scheduling=lr_scheduling,
+    )
+
+    logging.info(
+        f"The computation took {time.time() - start_time:.1f} seconds, {epochs_trained} epochs"
+    )
+    return verified, time.time() - start_time
+
+
+def train(
+    polygon_model: torch.nn.Sequential,
+    in_polygon: Polygon,
+    max_epochs: int | None = None,
+    early_stopping: Optional[int] = None,
+    lr_scheduling: Optional[int] = None,
+) -> Tuple[bool, int]:
+    trainable = len(list(polygon_model.parameters())) > 0
+    optimizer = None
+    if trainable:
+        optimizer = torch.optim.SGD(polygon_model.parameters(), lr=5.0)
+
+    epoch = 1
+    previous_loss: Optional[torch.Tensor] = None
+    history_size = max(early_stopping or 0, lr_scheduling or 0)
+    loss_rising = collections.deque(maxlen=int(2 * history_size))
+
+    while max_epochs is None or epoch <= max_epochs:
+        out_polygon: Polygon = polygon_model(in_polygon)
+        lower_bounds, _ = out_polygon.evaluate()
+
+        verified: bool = torch.all(lower_bounds > 0).item()  # type: ignore
+        if verified:
+            return True, epoch
+        if not optimizer:
+            return False, epoch
+
+        loss = lower_bounds.clamp(max=0).abs().sum()
+        loss_rising.append(
+            previous_loss is not None and loss.item() >= previous_loss.item()
+        )
+
+        number_of_rising = sum(1 for is_rising in loss_rising if is_rising)
+        lr = optimizer.param_groups[0]["lr"]
+        logging.info(f"Epoch {epoch:4d}: lr = {lr:.2f}, loss = {loss.item():.2f}")
+
+        if (
+            lr_scheduling is not None
+            and number_of_rising >= lr_scheduling
+            and loss_rising[-1]
+        ):
+            optimizer.param_groups[0]["lr"] = max(lr / 2, 1e-4)
+        if early_stopping is not None and number_of_rising >= early_stopping:
+            return False, epoch
+        previous_loss = loss
+
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+
+        # Clamp all alpha values after each step
+        for layer in polygon_model.children():
+            if isinstance(layer, LeakyReLUTransformer):
+                layer.clamp()
+
+        epoch += 1
+
+    return False, epoch
+
+
+def get_gt(net, spec):
+    folder = spec.split("/")[0]
+    with open(f"{folder}/gt.txt", "r") as f:
+        for line in f.read().splitlines():
+            model, fl, answer = line.split(",")
+            if model == net and fl in spec:
+                return answer
 
 
 def main():
@@ -153,11 +218,26 @@ def main():
         help="Whether to check the GT answer.",
         action=argparse.BooleanOptionalAction,
     )
+    parser.add_argument(
+        "--early-stopping",
+        help="A number specifying how many times the loss needs to increase to early-stop training.",
+        type=int,
+    )
+    parser.add_argument(
+        "--lr-scheduling",
+        help="A number specifying how many times the loss needs to increase to halve the learning rate.",
+        type=int,
+        default=1,
+    )
+    parser.add_argument(
+        "--log",
+        type=str,
+    )
     args = parser.parse_args()
+    if args.log:
+        logging.basicConfig(level=args.log.upper())
 
     true_label, dataset, image, eps = parse_spec(args.spec)
-
-    # print(args.spec)
 
     net = get_network(args.net, dataset, f"models/{dataset}_{args.net}.pt").to(DEVICE)
 
@@ -167,19 +247,27 @@ def main():
     pred_label = out.max(dim=1)[1].item()
     assert pred_label == true_label
 
-    verified = analyze(net, image, eps, true_label)
+    verified, duration = analyze(
+        net,
+        image,
+        eps,
+        true_label,
+        early_stopping=args.early_stopping,
+        lr_scheduling=args.lr_scheduling,
+    )
     verified_text = "verified" if verified else "not verified"
-    print(verified_text)
 
     if args.check:
-        with open("test_cases/gt.txt", "r") as f:
-            for line in f.read().splitlines():
-                model, fl, answer = line.split(",")
-                if model == args.net and fl in args.spec:
-                    if verified_text == answer:
-                        print("^ correct\n")
-                    else:
-                        print(f"incorrect, expected {answer}\n")
+        gt = get_gt(args.net, args.spec)
+        if verified_text == gt:
+            print(f"✅ (truth: {gt}, {duration:.1f}s): {args.spec}")
+        elif gt == "verified":
+            print(f"❌ ({gt}, {duration:.1f}s): {args.spec}")
+        else:
+            print(f"⚠️ ({gt}, {duration:.1f}s): {args.spec}")
+    else:
+        # TODO Is this all what's required by the evaluation?
+        print(verified_text)
 
 
 if __name__ == "__main__":

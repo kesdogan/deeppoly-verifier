@@ -228,6 +228,7 @@ def main():
         "--lr-scheduling",
         help="A number specifying how many times the loss needs to increase to halve the learning rate.",
         type=int,
+        default=1,
     )
     parser.add_argument(
         "--log",

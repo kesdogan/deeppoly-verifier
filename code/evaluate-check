@@ -5,7 +5,7 @@ for net in fc_base fc_1 fc_2 fc_3 fc_4 fc_5 fc_6 fc_7 conv_base conv_1 conv_2 co
 	for path in */"$net"/*.txt; do
 		# check if "*" is not in $path
 		if [[ $path != *\** ]]; then
-			python src/verifier.py --net ${net} --spec "$path" --check --early-stopping=2 --lr-scheduling=1
+			python code/verifier.py --net ${net} --spec "$path" --check --early-stopping=2 --lr-scheduling=1
 		fi
 
 	done

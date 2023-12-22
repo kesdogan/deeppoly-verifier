@@ -4,7 +4,6 @@ import logging
 import time
 from typing import Optional, Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
 from networks import get_network
@@ -107,7 +106,7 @@ def analyze(
     verified, epochs_trained = train(
         polygon_model=polygon_model,
         in_polygon=in_polygon,
-        max_epochs=25,
+        max_epochs=None,
         early_stopping=early_stopping,
         lr_scheduling=lr_scheduling,
     )

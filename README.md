@@ -6,7 +6,7 @@ This project implements a verifier for fully-connected and convolutional neural 
 
 **Authors:**
 
-- Timur Kesdogan ([tlk13](https://github.com/kesdogan))
+- Timur Kesdogan ([kesdogan](https://github.com/kesdogan))
 - Juraj Mičko ([jjurm](https://github.com/jjurm))
 - Evžen Wybitul ([eugleo](https://github.com/eugleo))
 
